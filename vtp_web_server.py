@@ -98,6 +98,11 @@ XTTS_KEEPALIVE_INTERVAL_SECONDS = max(60, int(os.environ.get("XTTS_KEEPALIVE_INT
 STORAGE_BUCKET = os.environ.get("STORAGE_BUCKET", "voice-references").strip() or "voice-references"
 STORAGE_ALLOW_PUBLIC_FALLBACK = os.environ.get("STORAGE_ALLOW_PUBLIC_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "on"}
 
+# Fish Audio API
+FISH_API_KEY = os.environ.get("FISH_API_KEY", "").strip()
+FISH_AUDIO_TTS_URL = "https://api.fish.audio/v1/tts"
+FISH_AUDIO_MODEL_URL = "https://api.fish.audio/v1/models"
+
 
 def _derive_modal_endpoint(base_url: str, target: str) -> str:
     """Supporte URL Modal de type function (-clone.modal.run) et path (/clone)."""
@@ -2099,49 +2104,87 @@ def generate_voice():
     except Exception as e:
         return jsonify({"success": False, "error": f"Audio de rÃ©fÃ©rence introuvable: {e}"}), 404
 
-    # Envoi vers Modal XTTS
+    # Synthèse vocale — Fish Audio API (priorité) ou Modal XTTS (fallback)
     try:
-        if not _is_xtts_url_configured():
-            return jsonify({
-                "success": False,
-                "error": "MODAL_XTTS_URL non configuree (placeholder detecte)."
-            }), 500
+        fish_reference_id = profile.get("fish_reference_id") or ""
+        audio_bytes = None
 
-        xtts_response = requests.post(
-            _get_xtts_clone_url(),
-            files={"speaker_wav": (file_id, reference_audio, "audio/wav")},
-            data={
-                "text":            text,
-                "reference_text":  profile.get("reference_text", ""),
-                "language":        language,
-                "speed":           str(speed),
-                "temperature":     str(temperature),
-                "top_k":           str(top_k),
-                "top_p":           str(top_p),
-                "repetition_penalty": str(repetition_penalty),
-                "length_penalty":  str(length_penalty),
-                "enable_text_splitting": "1" if enable_text_splitting else "0",
-                "gpt_cond_len": str(gpt_cond_len),
-                "gpt_cond_chunk_len": str(gpt_cond_chunk_len),
-                "max_ref_len": str(max_ref_len),
-                "sound_norm_refs": "1" if sound_norm_refs else "0",
-            },
-            timeout=300  # XTTS peut prendre jusqu'Ã  5 min
-        )
+        if FISH_API_KEY:
+            # --- Fish Audio API ---
+            fish_payload = {
+                "text": text,
+                "format": "wav",
+                "latency": "normal",
+                "normalize": True,
+            }
+            if fish_reference_id:
+                fish_payload["reference_id"] = fish_reference_id
+            else:
+                # Zero-shot : encode l'audio de référence en base64
+                import base64 as _b64
+                fish_payload["references"] = [{
+                    "audio": _b64.b64encode(reference_audio).decode(),
+                    "text": profile.get("reference_text", "") or "",
+                }]
 
-        if not xtts_response.ok:
-            err = ""
-            try:
-                err = xtts_response.json().get("error", "")
-            except Exception:
-                pass
-            return jsonify({
-                "success": False,
-                "error":   f"Erreur Modal XTTS (HTTP {xtts_response.status_code}): {err}"
-            }), 502
+            fish_resp = requests.post(
+                FISH_AUDIO_TTS_URL,
+                headers={
+                    "Authorization": f"Bearer {FISH_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=fish_payload,
+                timeout=60,
+            )
+            if fish_resp.ok:
+                audio_bytes = fish_resp.content
+            else:
+                err = ""
+                try:
+                    err = fish_resp.json().get("message", fish_resp.text[:200])
+                except Exception:
+                    err = fish_resp.text[:200]
+                print(f"[WARN] Fish Audio API error {fish_resp.status_code}: {err} — fallback XTTS")
 
-        # L'endpoint Modal retourne directement le fichier WAV
-        audio_bytes = xtts_response.content
+        if audio_bytes is None:
+            # --- Fallback Modal XTTS ---
+            if not _is_xtts_url_configured():
+                return jsonify({
+                    "success": False,
+                    "error": "Fish API non configurée et MODAL_XTTS_URL absent."
+                }), 500
+            xtts_response = requests.post(
+                _get_xtts_clone_url(),
+                files={"speaker_wav": (file_id, reference_audio, "audio/wav")},
+                data={
+                    "text":                   text,
+                    "reference_text":         profile.get("reference_text", ""),
+                    "language":               language,
+                    "speed":                  str(speed),
+                    "temperature":            str(temperature),
+                    "top_k":                  str(top_k),
+                    "top_p":                  str(top_p),
+                    "repetition_penalty":     str(repetition_penalty),
+                    "length_penalty":         str(length_penalty),
+                    "enable_text_splitting":  "1" if enable_text_splitting else "0",
+                    "gpt_cond_len":           str(gpt_cond_len),
+                    "gpt_cond_chunk_len":     str(gpt_cond_chunk_len),
+                    "max_ref_len":            str(max_ref_len),
+                    "sound_norm_refs":        "1" if sound_norm_refs else "0",
+                },
+                timeout=300,
+            )
+            if not xtts_response.ok:
+                err = ""
+                try:
+                    err = xtts_response.json().get("error", "")
+                except Exception:
+                    pass
+                return jsonify({
+                    "success": False,
+                    "error": f"Erreur Modal XTTS (HTTP {xtts_response.status_code}): {err}"
+                }), 502
+            audio_bytes = xtts_response.content
 
         # Upload du rÃ©sultat dans Supabase Storage pour accÃ¨s ultÃ©rieur
         result_path = f"generated/{user_id}/{uuid.uuid4()}.wav"
@@ -2176,13 +2219,121 @@ def generate_voice():
         })
 
     except requests.Timeout:
-        return jsonify({"success": False, "error": "Timeout â€” SynthÃ¨se trop longue. RÃ©duisez le texte."}), 504
+        return jsonify({"success": False, "error": "Timeout — Synthèse trop longue. Réduisez le texte."}), 504
     except Exception as e:
-        return jsonify({"success": False, "error": f"Erreur gÃ©nÃ©ration: {e}"}), 500
+        return jsonify({"success": False, "error": f"Erreur génération: {e}"}), 500
 
 
 # =============================================================================
-# ROUTE API EXTERNE â€” GÃ©nÃ©ration via clÃ© API (pour intÃ©grations tierces)
+# ROUTE FISH AUDIO — Upload référence vocale → fish_reference_id
+# =============================================================================
+
+@app.route("/api/fish/upload-reference", methods=["POST"])
+@login_required
+def fish_upload_reference():
+    """
+    Upload l'audio de référence d'un profil vocal vers Fish Audio API,
+    stocke le fish_reference_id dans Supabase voice_profiles.
+
+    Body JSON : { "profile_id": "uuid" }
+    Retourne  : { "success": true, "fish_reference_id": "..." }
+
+    Appeler une fois après création du profil vocal pour pré-enregistrer
+    la voix chez Fish Audio. Les appels /api/generate suivants utiliseront
+    cet ID au lieu de renvoyer l'audio à chaque fois → latence réduite.
+    """
+    if not FISH_API_KEY:
+        return jsonify({"success": False, "error": "FISH_API_KEY non configurée"}), 501
+
+    data = request.get_json() or {}
+    user_id = session["user_id"]
+    profile_id = data.get("profile_id")
+
+    if not profile_id:
+        return jsonify({"success": False, "error": "profile_id requis"}), 400
+
+    # Récupération du profil
+    try:
+        profile_result = (
+            supabase.table("voice_profiles")
+            .select("*")
+            .eq("id", profile_id)
+            .eq("user_id", user_id)
+            .single()
+            .execute()
+        )
+        profile = profile_result.data
+    except Exception:
+        return jsonify({"success": False, "error": "Profil vocal introuvable"}), 404
+
+    # Téléchargement de l'audio de référence depuis Supabase
+    file_id = profile.get("file_id", "")
+    storage_path = f"{profile['user_id']}/{file_id}"
+    try:
+        reference_audio = supabase.storage.from_(STORAGE_BUCKET).download(storage_path)
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Audio de référence introuvable: {e}"}), 404
+
+    # Upload vers Fish Audio API
+    try:
+        import base64 as _b64
+        fish_resp = requests.post(
+            "https://api.fish.audio/v1/models",
+            headers={"Authorization": f"Bearer {FISH_API_KEY}"},
+            json={
+                "title": profile.get("name", f"kommz-{profile_id[:8]}"),
+                "type": "tts",
+                "train_mode": "fast",
+                "visibility": "private",
+                "base_model": "speech-1.5",
+                "voices": [{
+                    "audio": _b64.b64encode(reference_audio).decode(),
+                    "text": profile.get("reference_text", "") or "",
+                }],
+            },
+            timeout=120,
+        )
+        if not fish_resp.ok:
+            err = ""
+            try:
+                err = fish_resp.json().get("message", fish_resp.text[:300])
+            except Exception:
+                err = fish_resp.text[:300]
+            return jsonify({
+                "success": False,
+                "error": f"Fish Audio upload error {fish_resp.status_code}: {err}"
+            }), 502
+
+        fish_model_id = fish_resp.json().get("_id") or fish_resp.json().get("id") or ""
+        if not fish_model_id:
+            return jsonify({"success": False, "error": "Fish Audio n'a pas retourné d'ID modèle"}), 502
+
+    except requests.Timeout:
+        return jsonify({"success": False, "error": "Timeout upload Fish Audio"}), 504
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Erreur upload Fish Audio: {e}"}), 500
+
+    # Sauvegarde du fish_reference_id dans Supabase
+    try:
+        supabase.table("voice_profiles").update(
+            {"fish_reference_id": fish_model_id}
+        ).eq("id", profile_id).eq("user_id", user_id).execute()
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Fish upload OK mais échec sauvegarde Supabase: {e}",
+            "fish_reference_id": fish_model_id,
+        }), 500
+
+    return jsonify({
+        "success": True,
+        "fish_reference_id": fish_model_id,
+        "profile_id": profile_id,
+    })
+
+
+# =============================================================================
+# ROUTE API EXTERNE — Génération via clé API (pour intégrations tierces)
 # =============================================================================
 
 @app.route("/v1/synthesis", methods=["POST"])
