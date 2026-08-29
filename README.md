@@ -1,6 +1,6 @@
 # Kommz Voice
 
-[Français](README.md) | [English](README.fr.md)
+[English](README.md) | [Français](README.fr.md)
 
 Kommz Voice is the voice-engine layer of the Kommz ecosystem.
 It powers synthesis, transcription, and multi-engine routing for connected clients.
