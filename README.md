@@ -1,110 +1,69 @@
-## Kommz Voice
-
-Kommz Voice est la brique moteur de l'écosystème Kommz.
-
-Ce repo regroupe la partie vocale et services autour de :
-- la synthèse vocale temps réel
-- les moteurs XTTS et GPT-SoVITS
-- la transcription Whisper
-- les services backend liés aux usages temps réel
+# Kommz Voice
 
 [Français](README.md) | [English](README.en.md)
 
-Kommz Voice est la **brique moteur vocale** de l'écosystème Kommz.
-Elle alimente les flux de **transcription**, **traduction** (via client) et **synthèse vocale** utilisés en temps réel par les applications clientes (ex: *Kommz Gamer Community*).
+Kommz Voice is the voice-engine layer of the Kommz ecosystem.
+It powers synthesis, transcription, and multi-engine routing for connected clients.
 
-## Ce que fait le projet
+## What this project does
 
-<<<<<<< Updated upstream
-- XTTS pour la synthèse multilingue
-- GPT-SoVITS pour le timbre et le style vocal (Hybrid)
-- Whisper pour la transcription
-- API serveur pour l'intégration côté client
-- Routage et fallback selon la disponibilité des moteurs
-=======
-L'objectif de Kommz Voice est de proposer une base plus claire, plus modulaire et plus robuste pour alimenter l'écosystème vocal autour de Kommz.
-
-### Rôle dans l'écosystème
-- `Kommz Gamer Community` : client desktop open source
-- `Kommz Voice` : moteurs et services vocaux
-- `Discord` : communauté, support, retours
-- `Patreon` : soutien au développement et avantages liés à l'écosystème
-
-### Priorités actuelles
-- fiabilisation des moteurs vocaux
-- amélioration des fallbacks et du routage
-- meilleure structure documentaire
-- meilleure séparation entre client et brique moteur
-- amélioration du support pour les usages temps réel
-
-### Liens
-- Community : https://github.com/Kommz-Gamer/Kommz-Gamer
-- Discord : https://discord.gg/uv25d6uGKZ
-- Patreon : https://www.patreon.com/KommzInnovations
-- Site : https://kommz.fr
-
+- XTTS for multilingual synthesis
+- GPT-SoVITS for voice timbre and style
+- Whisper for transcription
+- Server API for client integration
+- Routing and fallback based on engine availability
 
 ## Ecosystem positioning
->>>>>>> Stashed changes
 
-## Rôle dans l'écosystème
+- Open-source client / community app: `Kommz Gamer Community`
+- Engine layer: `Kommz Voice`
+- Support and community: Discord + Patreon
 
-- Client / communauté open source : `Kommz Gamer Community` (repo séparé)
-- Brique moteur : `Kommz Voice` (ce repo)
-- Support & communauté : Discord + Patreon
+## References
 
-## Références
+- Architecture: `docs/architecture-overview.md`
+- Message guidelines: `docs/message-guidelines.md`
+- Security and rotation: `docs/security-rotation-runbook.md`
+- Release checklist: `docs/release-security-checklist.md`
+- Roadmap: `ROADMAP.en.md`
 
-- Architecture : `docs/architecture-overview.md`
-- Guidelines messages : `docs/message-guidelines.md`
-- Sécurité et rotation : `docs/security-rotation-runbook.md`
-- Checklist de release : `docs/release-security-checklist.md`
-- Roadmap : `ROADMAP.md`
+## Quick start
 
-## Démarrage rapide
-
-1. Copier `env.template` vers `.env`.
-2. Renseigner uniquement les secrets nécessaires.
-3. Copier `settings.example.json` vers `settings.json` pour la config locale.
-4. Ne jamais committer `.env` ni `settings.json`.
-5. Installer les dépendances :
+1. Copy `env.template` to `.env`.
+2. Fill only the required secrets.
+3. Copy `settings.example.json` to `settings.json` for local configuration.
+4. Never commit `.env` or `settings.json`.
+5. Install dependencies:
    - `pip install -r requirements.txt`
-6. Lancer le serveur :
+6. Start the server:
    - `python vtp_web_server.py`
 
-## Sécurité
+## Security
 
-- Hooks recommandés :
+- Recommended hooks:
   - `pip install pre-commit detect-secrets`
   - `pre-commit install`
-- Baseline secrets :
+- Refresh the secrets baseline:
   - `detect-secrets scan > .secrets.baseline`
-- Pour la rotation ou la purge d'historique Git :
+- For Git history purges after secret rotation:
   - `scripts/purge-git-history.ps1`
 
-`vtp_web_server.py` applique des vérifications fail-fast en production quand des secrets critiques sont absents ou invalides.
+`vtp_web_server.py` applies fail-fast checks in production when critical secrets are missing or invalid.
 
-## Contribuer / Support
+## Public links
 
-- Contribuer : `CONTRIBUTING.md`
-- Support : `SUPPORT.md`
-- Politique de sécurité : `SECURITY.md` / `SECURITY.fr.md`
+- Community GitHub: https://github.com/Kommz-Gamer/Kommz-Gamer
+- Discord: https://discord.gg/uv25d6uGKZ
+- Patreon: https://www.patreon.com/KommzInnovations
 
-## Liens publics
+## Contributing / Support
 
-- GitHub Communauté : https://github.com/Kommz-Gamer/Kommz-Gamer
-- Discord : https://discord.gg/uv25d6uGKZ
-- Patreon : https://www.patreon.com/KommzInnovations
-- Site : https://kommz.fr
-
-## Contribuer / Support
-
-- Contribuer : `CONTRIBUTING.md`
-- Support : `SUPPORT.md`
+- Contributing: `CONTRIBUTING.md`
+- Support: `SUPPORT.md`
 
 ## Releases
 
-Pour standardiser les notes de version :
+Use these templates to standardize release notes:
 
-- Français : `release-template.fr.md`
-- English : `release-template.en.md`
+- French: `release-template.fr.md`
+- English: `release-template.en.md`
