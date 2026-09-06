@@ -183,7 +183,14 @@ DESKTOP_MINIMUM_VERSION = os.environ.get("DESKTOP_MINIMUM_VERSION", "").strip()
 _UPDATE_CHANGELOG_CACHE = {}
 
 
-def _fetch_desktop_changelog_summary(url: str, ttl_seconds: int = 300) -> str:
+def _fetch_desktop_changelog_summary(url: str, ttl_seconds: int = 300,
+                                     max_lines: int = 8) -> str:
+    """Resume du changelog affiche dans la notification de mise a jour.
+
+    Volontairement tronque : ce texte part dans l'overlay de sous-titres,
+    par-dessus le jeu. Le fichier complet reste accessible via
+    changelog_url.
+    """
     url = (url or "").strip()
     if not url:
         return ""
@@ -212,9 +219,9 @@ def _fetch_desktop_changelog_summary(url: str, ttl_seconds: int = 300) -> str:
             if len(line) > 180:
                 line = line[:177].rstrip() + "..."
             lines.append(line)
-            if len(lines) >= 5:
+            if len(lines) >= max_lines:
                 break
-        summary = "\n".join(lines[:5]).strip()
+        summary = "\n".join(lines[:max_lines]).strip()
         _UPDATE_CHANGELOG_CACHE[url] = {"text": summary, "ts": now}
         return summary
     except Exception:
