@@ -1,4 +1,4 @@
-﻿"""
+"""
 =============================================================================
   KOMMZ VOICE â€” WEB SERVER (vtp_web_server.py)
   Backend Flask pour le site de clonage vocal (hÃ©bergÃ© sur Render.com)
@@ -174,10 +174,13 @@ TRIAL_GUARD_ENABLED = os.environ.get("TRIAL_GUARD_ENABLED", "1").strip().lower()
 DESKTOP_STABLE_VERSION = os.environ.get("DESKTOP_STABLE_VERSION", "4.1").strip()
 DESKTOP_DOWNLOAD_URL = os.environ.get("DESKTOP_DOWNLOAD_URL", "").strip()
 DESKTOP_CHANGELOG_URL = os.environ.get("DESKTOP_CHANGELOG_URL", "").strip()
+# Changelog anglais. Si la variable est vide, on retombe sur le francais.
+DESKTOP_CHANGELOG_URL_EN = os.environ.get("DESKTOP_CHANGELOG_URL_EN", "").strip()
 DESKTOP_DOWNLOAD_SHA256 = os.environ.get("DESKTOP_DOWNLOAD_SHA256", "").strip().lower()
 DESKTOP_FORCE_UPDATE = os.environ.get("DESKTOP_FORCE_UPDATE", "0").strip() in {"1", "true", "yes", "on"}
 DESKTOP_MINIMUM_VERSION = os.environ.get("DESKTOP_MINIMUM_VERSION", "").strip()
-_UPDATE_CHANGELOG_CACHE = {"url": "", "text": "", "ts": 0.0}
+# Cache indexe par URL : deux langues cohabitent sans se chasser.
+_UPDATE_CHANGELOG_CACHE = {}
 
 
 def _fetch_desktop_changelog_summary(url: str, ttl_seconds: int = 300) -> str:
@@ -185,8 +188,9 @@ def _fetch_desktop_changelog_summary(url: str, ttl_seconds: int = 300) -> str:
     if not url:
         return ""
     now = time.time()
-    if _UPDATE_CHANGELOG_CACHE["url"] == url and _UPDATE_CHANGELOG_CACHE["text"] and (now - _UPDATE_CHANGELOG_CACHE["ts"]) < ttl_seconds:
-        return _UPDATE_CHANGELOG_CACHE["text"]
+    entry = _UPDATE_CHANGELOG_CACHE.get(url)
+    if entry and entry.get("text") and (now - entry.get("ts", 0.0)) < ttl_seconds:
+        return entry["text"]
     try:
         r = requests.get(
             url,
@@ -211,7 +215,7 @@ def _fetch_desktop_changelog_summary(url: str, ttl_seconds: int = 300) -> str:
             if len(lines) >= 5:
                 break
         summary = "\n".join(lines[:5]).strip()
-        _UPDATE_CHANGELOG_CACHE.update({"url": url, "text": summary, "ts": now})
+        _UPDATE_CHANGELOG_CACHE[url] = {"text": summary, "ts": now}
         return summary
     except Exception:
         return ""
@@ -2581,6 +2585,11 @@ def update_check_desktop():
     current = (request.args.get("current") or "").strip()
     channel = (request.args.get("channel") or "stable").strip().lower()
     platform = (request.args.get("platform") or "windows").strip().lower()
+    # Langue d'affichage declaree par le client. Defaut francais pour rester
+    # compatible avec les versions qui n'envoient pas encore ce parametre.
+    lang = (request.args.get("lang") or "fr").strip().lower()
+    if lang not in {"fr", "en"}:
+        lang = "fr"
 
     latest = (DESKTOP_STABLE_VERSION or "").strip().lstrip("vV")
     current_t = _parse_version_tuple(current)
@@ -2588,12 +2597,20 @@ def update_check_desktop():
     update_available = bool(latest_t and current_t and latest_t > current_t)
     if not current_t and latest_t:
         update_available = True
-    message = "Vous êtes à jour."
+    changelog_url = DESKTOP_CHANGELOG_URL
+    if lang == "en" and DESKTOP_CHANGELOG_URL_EN:
+        changelog_url = DESKTOP_CHANGELOG_URL_EN
+
     if update_available:
-        message = f"Nouvelle version disponible: {latest}"
-        summary = _fetch_desktop_changelog_summary(DESKTOP_CHANGELOG_URL)
+        message = (
+            f"New version available: {latest}" if lang == "en"
+            else f"Nouvelle version disponible: {latest}"
+        )
+        summary = _fetch_desktop_changelog_summary(changelog_url)
         if summary:
             message = f"{message}\n{summary}"
+    else:
+        message = "You are up to date." if lang == "en" else "Vous êtes à jour."
 
     return jsonify({
         "ok": True,
@@ -2603,8 +2620,12 @@ def update_check_desktop():
         "latest_version": latest,
         "update_available": update_available,
         "download_url": DESKTOP_DOWNLOAD_URL,
-        "changelog_url": DESKTOP_CHANGELOG_URL,
-        "download_sha256": DESKTOP_DOWNLOAD_SHA256,
+        "lang": lang,
+        "changelog_url": changelog_url,
+        # Certains outils prefixent l'empreinte ("sha256:abc..."). Le
+        # client compare a un digest nu : sans ce nettoyage, toute
+        # installation est rejetee pour checksum invalide.
+        "download_sha256": DESKTOP_DOWNLOAD_SHA256.split(":")[-1].strip(),
         "force_update": DESKTOP_FORCE_UPDATE,
         "minimum_version": DESKTOP_MINIMUM_VERSION,
         "message": message,
