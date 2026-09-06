@@ -1548,7 +1548,11 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
 <script>
 (function () {
   // Meme cle que l'application et les guides : la langue suit l'utilisateur.
-  var lang = localStorage.getItem('kommz_lang') || 'fr';
+  // Premiere ouverture : on suit la langue du systeme. Le choix
+// explicite de l'utilisateur, une fois fait, prime toujours.
+// Les parentheses sont necessaires : || est prioritaire sur ? :
+  var lang = localStorage.getItem('kommz_lang')
+    || ((navigator.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en');
   function apply() {
     document.querySelectorAll('[data-fr]').forEach(function (el) {
       var v = lang === 'en'
