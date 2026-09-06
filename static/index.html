@@ -275,7 +275,7 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
             <div style="text-align:center;margin-bottom:32px;">
                 <div class="auth-logo" style="margin:0 auto 14px;width:60px;height:60px;font-size:1.8rem;">K</div>
                 <div style="font-size:1.3rem;font-weight:800;letter-spacing:-.03em;">Kommz Voice</div>
-                <div style="font-family:var(--font);font-size:.58rem;color:var(--violet-light);font-weight:600;letter-spacing:.15em;text-transform:uppercase;margin-top:4px;">Moteur vocal IA</div>
+                <div style="font-family:var(--font);font-size:.58rem;color:var(--violet-light);font-weight:600;letter-spacing:.15em;text-transform:uppercase;margin-top:4px;" data-fr="Moteur vocal IA" data-en="AI voice engine">Moteur vocal IA</div>
             </div>
 
             <!-- Icône verrou -->
@@ -284,7 +284,7 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
             </div>
 
             <div style="margin-bottom:8px;">
-                <label class="field-label">Clé de licence Voice</label>
+                <label class="field-label" data-fr="Clé de licence Voice" data-en="Voice license key">Clé de licence Voice</label>
                 <input
                     type="text"
                     id="licenseKeyInput"
@@ -303,14 +303,14 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                 class="btn-violet"
                 onclick="verifyLicenseKey()"
                 style="margin-bottom:20px;"
-            >
+             data-fr="Vérifier la licence →" data-en="Check license →">
                 Vérifier la licence →
             </button>
 
             <!-- Séparateur -->
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
                 <div style="flex:1;height:1px;background:var(--border);"></div>
-                <span style="font-family:var(--font);font-size:.58rem;color:var(--muted);letter-spacing:.1em;">OU</span>
+                <span style="font-family:var(--font);font-size:.58rem;color:var(--muted);letter-spacing:.1em;" data-fr="OU" data-en="OR">OU</span>
                 <div style="flex:1;height:1px;background:var(--border);"></div>
             </div>
 
@@ -321,7 +321,7 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                 onclick="showLoginOnly()"
                 onmouseover="this.style.background='rgba(255,255,255,.07)'"
                 onmouseout="this.style.background='rgba(255,255,255,.04)'"
-            >
+             data-fr="J'ai déjà un compte — Se connecter" data-en="I already have an account — Sign in">
                 J'ai déjà un compte — Se connecter
             </button>
 
@@ -329,13 +329,13 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                 class="btn-violet"
                 style="margin-top:10px;background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.3);box-shadow:none;color:var(--violet-light);"
                 onclick="startFreeTrialFlow()"
-            >
+             data-fr="Essai gratuit 24h (30 min audio)" data-en="Free 24h trial (30 min of audio)">
                 Essai gratuit 24h (30 min audio)
             </button>
 
             <p style="text-align:center;font-size:.65rem;color:var(--muted);margin-top:20px;">
-                Pas encore de licence ?
-                <a href="https://kommz.fr/#pricing" target="_blank" style="color:var(--violet-light);text-decoration:none;font-weight:700;">Voir les offres →</a>
+                <span data-fr="Pas encore de licence ?" data-en="No license yet?">Pas encore de licence ?</span>
+                <a href="https://kommz.fr/#pricing" target="_blank" style="color:var(--violet-light);text-decoration:none;font-weight:700;" data-fr="Voir les offres →" data-en="See plans →">Voir les offres →</a>
             </p>
         </div>
     </div>
@@ -351,22 +351,22 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                 <div class="auth-logo">K</div>
                 <div>
                     <div style="font-size:1.25rem;font-weight:800;letter-spacing:-.03em;">Kommz Voice</div>
-                    <div style="font-family:var(--font);font-size:.6rem;color:var(--violet-light);font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin-top:2px;">Moteur vocal IA</div>
+                    <div style="font-family:var(--font);font-size:.6rem;color:var(--violet-light);font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin-top:2px;" data-fr="Moteur vocal IA" data-en="AI voice engine">Moteur vocal IA</div>
                 </div>
                 <!-- Badge licence validée -->
-                <div id="licenseBadgeAuth" style="margin-left:auto;display:none;align-items:center;gap:5px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:#10b981;padding:4px 10px;border-radius:20px;font-family:var(--font);font-size:.58rem;font-weight:700;white-space:nowrap;">
+                <div id="licenseBadgeAuth" style="margin-left:auto;display:none;align-items:center;gap:5px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:#10b981;padding:4px 10px;border-radius:20px;font-family:var(--font);font-size:.58rem;font-weight:700;white-space:nowrap;" data-fr="✓ LICENCE OK" data-en="✓ LICENSE OK">
                     ✓ LICENCE OK
                 </div>
             </div>
             <div class="auth-tabs">
-                <div class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Connexion</div>
-                <div class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">Inscription</div>
+                <div class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')" data-fr="Connexion" data-en="Sign in">Connexion</div>
+                <div class="auth-tab" id="tab-register" onclick="switchAuthTab('register')" data-fr="Inscription" data-en="Sign up">Inscription</div>
             </div>
             <div id="auth-login">
                 <form onsubmit="handleAuth(event,'/login')">
-                    <div style="margin-bottom:16px;"><label class="field-label">Identifiant réseau</label><input type="email" name="email" id="loginEmail" class="kommz-input" placeholder="votre@email.com" required></div>
-                    <div style="margin-bottom:24px;"><label class="field-label">Clé d'accès</label><input type="password" name="password" class="kommz-input" placeholder="••••••••••••" required></div>
-                    <button class="btn-violet">Initialiser le système →</button>
+                    <div style="margin-bottom:16px;"><label class="field-label" data-fr="Identifiant réseau" data-en="Network ID">Identifiant réseau</label><input type="email" name="email" id="loginEmail" class="kommz-input" placeholder="votre@email.com" required></div>
+                    <div style="margin-bottom:24px;"><label class="field-label" data-fr="Clé d'accès" data-en="Access key">Clé d'accès</label><input type="password" name="password" class="kommz-input" placeholder="••••••••••••" required></div>
+                    <button class="btn-violet" data-fr="Initialiser le système →" data-en="Initialise the system →">Initialiser le système →</button>
                 </form>
             </div>
             <div id="auth-register" class="dn">
@@ -374,13 +374,13 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                     <input type="hidden" name="license_key" id="hiddenLicenseKey">
                     <input type="hidden" name="trial_mode" id="hiddenTrialMode" value="0">
                     <input type="hidden" name="trial_fingerprint" id="hiddenTrialFingerprint" value="">
-                    <div style="margin-bottom:16px;"><label class="field-label">Créer un identifiant</label><input type="email" name="email" id="registerEmail" class="kommz-input" placeholder="votre@email.com" required></div>
-                    <div style="margin-bottom:24px;"><label class="field-label">Définir une clé</label><input type="password" name="password" class="kommz-input" placeholder="Mot de passe fort" required></div>
-                    <button class="btn-violet">Créer le compte →</button>
+                    <div style="margin-bottom:16px;"><label class="field-label" data-fr="Créer un identifiant" data-en="Create an ID">Créer un identifiant</label><input type="email" name="email" id="registerEmail" class="kommz-input" placeholder="votre@email.com" required></div>
+                    <div style="margin-bottom:24px;"><label class="field-label" data-fr="Définir une clé" data-en="Set a key">Définir une clé</label><input type="password" name="password" class="kommz-input" placeholder="Mot de passe fort" data-ph-fr="Mot de passe fort" data-ph-en="Strong password" required></div>
+                    <button class="btn-violet" data-fr="Créer le compte →" data-en="Create account →">Créer le compte →</button>
                 </form>
             </div>
             <p style="text-align:center;margin-top:18px;font-size:.68rem;color:var(--muted);">
-                <a href="#" onclick="document.getElementById('screen-license').classList.remove('dn');document.getElementById('screen-auth').classList.add('dn');return false;" style="color:var(--muted);text-decoration:none;">← Revenir à la vérification de licence</a>
+                <a href="#" onclick="document.getElementById('screen-license').classList.remove('dn');document.getElementById('screen-auth').classList.add('dn');return false;" style="color:var(--muted);text-decoration:none;" data-fr="← Revenir à la vérification de licence" data-en="← Back to license check">← Revenir à la vérification de licence</a>
             </p>
         </div>
     </div>
@@ -392,7 +392,7 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
         <div class="sidebar">
             <div class="brand">
                 <div class="brand-icon">K</div>
-                <div><div class="brand-name">KOMMZ VOICE</div><div class="brand-sub">Moteur vocal IA</div></div>
+                <div><div class="brand-name">KOMMZ VOICE</div><div class="brand-sub" data-fr="Moteur vocal IA" data-en="AI voice engine">Moteur vocal IA</div></div>
             </div>
             <div class="nav-label" style="margin-bottom:10px;">Studio</div>
             <div id="nav-lab" class="nav-item active" onclick="switchTab('lab')">
@@ -413,10 +413,10 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                     <div style="flex:1;min-width:0;"><div class="user-email">{{ user.email }}</div><div class="user-status">Authentified ✓</div></div>
                     <a href="#" class="logout-btn" onclick="doLogout(event)"><i class="bi bi-power"></i></a>
                 </div>
-                <a href="#" class="logout-action" onclick="doLogout(event)"><i class="bi bi-box-arrow-right"></i> Déconnexion</a>
+                <a href="#" class="logout-action" onclick="doLogout(event)"><i class="bi bi-box-arrow-right"></i> <span data-fr="Déconnexion" data-en="Sign out">Déconnexion</span></a>
                 <div id="trialStatusCard" class="trial-card dn">
-                    <div class="trial-title">Plan Essai</div>
-                    <div class="trial-main" id="trialRemainingMain">Calcul...</div>
+                    <div class="trial-title" data-fr="Plan Essai" data-en="Trial plan">Plan Essai</div>
+                    <div class="trial-main" id="trialRemainingMain" data-fr="Calcul..." data-en="Calculating...">Calcul...</div>
                     <div class="trial-sub" id="trialRemainingSub"></div>
                 </div>
             </div>
@@ -429,14 +429,14 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                     <div>
                         <div class="lab-eyebrow">// Kommz · moteur vocal IA</div>
                         <div class="lab-title">Voice <span>Lab</span></div>
-                        <div class="lab-sub">Banque d'empreintes vocales · Clonage vocal IA via Modal A10G</div>
+                        <div class="lab-sub" data-fr="Banque d'empreintes vocales · Clonage vocal IA via Modal A10G" data-en="Voice print library · AI voice cloning via Modal A10G">Banque d'empreintes vocales · Clonage vocal IA via Modal A10G</div>
                     </div>
                     <div class="lab-actions">
                         <div class="xtts-status" id="xttsStatusBadge" title="Vérification serveur de clonage...">
                             <span class="xtts-dot"></span>
-                            <span id="xttsStatusText">Serveur clonage: vérification...</span>
+                            <span id="xttsStatusText" data-fr="Serveur clonage: vérification..." data-en="Cloning server: checking...">Serveur clonage: vérification...</span>
                         </div>
-                        <button class="btn-new" onclick="openWizard()"><i class="bi bi-plus-lg"></i> Nouveau Clone</button>
+                        <button class="btn-new" onclick="openWizard()"><i class="bi bi-plus-lg"></i> <span data-fr="Nouveau Clone" data-en="New clone">Nouveau Clone</span></button>
                     </div>
                 </div>
                 <div class="voice-grid" id="voiceGrid"></div>
@@ -445,18 +445,18 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
             <!-- API -->
             <div id="view-api" class="api-view dn">
                 <h1 style="font-size:1.8rem;font-weight:800;letter-spacing:-.04em;margin-bottom:8px;">API Diamond Core</h1>
-                <p style="color:var(--muted-light);margin-bottom:28px;font-size:.88rem;">Connectez vos applications au moteur vocal IA via REST.</p>
+                <p style="color:var(--muted-light);margin-bottom:28px;font-size:.88rem;" data-fr="Connectez vos applications au moteur vocal IA via REST." data-en="Connect your applications to the AI voice engine over REST.">Connectez vos applications au moteur vocal IA via REST.</p>
                 <div class="api-card">
-                    <div class="api-card-title">Votre clé d'accès privée</div>
-                    <p style="font-size:.78rem;color:var(--muted);margin-bottom:0;">Ne jamais partager cette clé.</p>
+                    <div class="api-card-title" data-fr="Votre clé d'accès privée" data-en="Your private access key">Votre clé d'accès privée</div>
+                    <p style="font-size:.78rem;color:var(--muted);margin-bottom:0;" data-fr="Ne jamais partager cette clé." data-en="Never share this key.">Ne jamais partager cette clé.</p>
                     <div class="api-key-row">
                         <input type="text" id="userApiKey" class="api-key-input" value="{{ user.api_key }}" readonly>
-                        <button class="api-copy-btn" onclick="copyApiKey()">Copier</button>
+                        <button class="api-copy-btn" onclick="copyApiKey()" data-fr="Copier" data-en="Copy">Copier</button>
                     </div>
                 </div>
                 <div class="api-card">
-                    <div style="font-size:.95rem;font-weight:700;margin-bottom:8px;">Documentation d'inférence</div>
-                    <p style="font-size:.78rem;color:var(--muted-light);margin-bottom:0;">Endpoint POST pour générer de l'audio :</p>
+                    <div style="font-size:.95rem;font-weight:700;margin-bottom:8px;" data-fr="Documentation d'inférence" data-en="Inference documentation">Documentation d'inférence</div>
+                    <p style="font-size:.78rem;color:var(--muted-light);margin-bottom:0;" data-fr="Endpoint POST pour générer de l'audio :" data-en="POST endpoint to generate audio:">Endpoint POST pour générer de l'audio :</p>
                     <div class="code-block"><pre>curl -X POST https://votre-domaine-render.com/v1/synthesis \
   -H "Authorization: Bearer {{ user.api_key }}" \
   -H "Content-Type: application/json" \
@@ -472,20 +472,20 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
             {% if secure_tts_enabled %}
             <div id="view-secure" class="secure-view dn">
                 <div class="secure-wrap">
-                    <div class="secure-title">Secure TTS Multi-langue</div>
-                    <div class="secure-sub">Zone protégée par mot de passe pour synthèse locale navigateur.</div>
+                    <div class="secure-title" data-fr="Secure TTS Multi-langue" data-en="Multi-language Secure TTS">Secure TTS Multi-langue</div>
+                    <div class="secure-sub" data-fr="Zone protégée par mot de passe pour synthèse locale navigateur." data-en="Password-protected area for local in-browser synthesis.">Zone protégée par mot de passe pour synthèse locale navigateur.</div>
                     <div class="secure-card" id="secureLockBox">
-                        <label class="secure-label" for="securePassword">Mot de passe</label>
+                        <label class="secure-label" for="securePassword" data-fr="Mot de passe" data-en="Password">Mot de passe</label>
                         <div class="secure-row">
-                            <input id="securePassword" type="password" class="secure-input" placeholder="Entrer le mot de passe">
-                            <button class="secure-btn primary" onclick="unlockSecureTts()">Déverrouiller</button>
+                            <input id="securePassword" type="password" class="secure-input" placeholder="Entrer le mot de passe" data-ph-fr="Entrer le mot de passe" data-ph-en="Enter the password">
+                            <button class="secure-btn primary" onclick="unlockSecureTts()" data-fr="Déverrouiller" data-en="Unlock">Déverrouiller</button>
                         </div>
-                        <div class="secure-note" style="margin-top:10px;">Accès requis pour activer l'onglet.</div>
+                        <div class="secure-note" style="margin-top:10px;" data-fr="Accès requis pour activer l'onglet." data-en="Access required to enable this tab.">Accès requis pour activer l'onglet.</div>
                     </div>
                     <div class="secure-card dn" id="secureMainBox">
-                        <label class="secure-label" for="secureProfile">Voix Voice Lab</label>
+                        <label class="secure-label" for="secureProfile" data-fr="Voix Voice Lab" data-en="Voice Lab voices">Voix Voice Lab</label>
                         <select id="secureProfile" class="secure-select"></select>
-                        <label class="secure-label" for="secureLang">Langue cible</label>
+                        <label class="secure-label" for="secureLang" data-fr="Langue cible" data-en="Target language">Langue cible</label>
                         <select id="secureLang" class="secure-select">
                             <option value="fr-FR">Français</option>
                             <option value="en-US">English</option>
@@ -495,13 +495,13 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                             <option value="it-IT">Italiano</option>
                             <option value="pt-PT">Português</option>
                         </select>
-                        <label class="secure-label" for="secureText" style="margin-top:12px;">Texte</label>
-                        <textarea id="secureText" class="secure-textarea" placeholder="Tape ton texte ici..."></textarea>
+                        <label class="secure-label" for="secureText" style="margin-top:12px;" data-fr="Texte" data-en="Text">Texte</label>
+                        <textarea id="secureText" class="secure-textarea" placeholder="Tape ton texte ici..." data-ph-fr="Tape ton texte ici..." data-ph-en="Type your text here..."></textarea>
                         <div class="secure-actions">
-                            <button class="secure-btn primary" onclick="secureSpeakLab()">Lire en Qualite Max (XTTS)</button>
+                            <button class="secure-btn primary" onclick="secureSpeakLab()" data-fr="Lire en Qualite Max (XTTS)" data-en="Play in max quality (XTTS)">Lire en Qualite Max (XTTS)</button>
                             <button class="secure-btn warn" onclick="secureStop()">Stop</button>
                         </div>
-                        <div class="secure-note" style="margin-top:10px;">Mode qualite max: XTTS Voice Lab uniquement (stabilite + fidelite).</div>
+                        <div class="secure-note" style="margin-top:10px;" data-fr="Mode qualite max: XTTS Voice Lab uniquement (stabilite + fidelite)." data-en="Max quality mode: XTTS Voice Lab only (stability + fidelity).">Mode qualite max: XTTS Voice Lab uniquement (stabilite + fidelite).</div>
                     </div>
                 </div>
             </div>
@@ -511,10 +511,10 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
 
     <!-- CONTEXT MENU -->
     <div id="ctxMenu" class="ctx-menu">
-        <div class="ctx-item" onclick="app.copyId()"><i class="bi bi-clipboard2-data"></i> Copier l'ID</div>
-        <div class="ctx-item" onclick="app.previewCtx()"><i class="bi bi-play-circle"></i> Écouter</div>
+        <div class="ctx-item" onclick="app.copyId()"><i class="bi bi-clipboard2-data"></i> <span data-fr="Copier l'ID" data-en="Copy ID">Copier l'ID</span></div>
+        <div class="ctx-item" onclick="app.previewCtx()"><i class="bi bi-play-circle"></i> <span data-fr="Écouter" data-en="Play">Écouter</span></div>
         <div class="ctx-div"></div>
-        <div class="ctx-item danger" onclick="app.deleteVoice()"><i class="bi bi-trash3"></i> Révoquer</div>
+        <div class="ctx-item danger" onclick="app.deleteVoice()"><i class="bi bi-trash3"></i> <span data-fr="Révoquer" data-en="Revoke">Révoquer</span></div>
     </div>
 
     <!-- WIZARD MODAL -->
@@ -526,7 +526,7 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                     <div class="wiz-logo">K</div>
                     <div class="wiz-step active" id="wiz-ind-1">
                         <div class="wiz-step-num">01</div>
-                        <div><div class="wiz-step-title">Audio Data</div><div class="wiz-step-sub">Acquisition source</div></div>
+                        <div><div class="wiz-step-title">Audio Data</div><div class="wiz-step-sub" data-fr="Acquisition source" data-en="Source acquisition">Acquisition source</div></div>
                     </div>
                     <div class="wiz-step" id="wiz-ind-2">
                         <div class="wiz-step-num">02</div>
@@ -544,7 +544,7 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                     <!-- STEP 1 -->
                     <div id="wiz-step-1">
                         <div class="wiz-top">
-                            <div class="wiz-title">Acquisition Audio</div>
+                            <div class="wiz-title" data-fr="Acquisition Audio" data-en="Audio acquisition">Acquisition Audio</div>
                             <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal"></button>
                         </div>
 
@@ -552,79 +552,79 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                              onclick="document.getElementById('audioFile').click()"
                              ondragover="doDragOver(event)" ondragleave="doDragLeave(event)" ondrop="doDrop(event)">
                             <div class="upload-icon"><i class="bi bi-cloud-arrow-up-fill"></i></div>
-                            <div class="upload-title">Flux d'entrée vocal — moteur vocal IA</div>
-                            <div class="upload-sub">Injectez 10 à 90 secondes de votre voix pour le clonage optimal</div>
-                            <div class="upload-fmt">WAV · MP3 · FLAC · M4A · WEBM — Max 32MB</div>
+                            <div class="upload-title" data-fr="Flux d'entrée vocal — moteur vocal IA" data-en="Voice input stream — AI voice engine">Flux d'entrée vocal — moteur vocal IA</div>
+                            <div class="upload-sub" data-fr="Injectez 10 à 90 secondes de votre voix pour le clonage optimal" data-en="Feed in 10 to 90 seconds of your voice for the best cloning result">Injectez 10 à 90 secondes de votre voix pour le clonage optimal</div>
+                            <div class="upload-fmt" data-fr="WAV · MP3 · FLAC · M4A · WEBM — Max 32MB" data-en="WAV · MP3 · FLAC · M4A · WEBM — 32MB max">WAV · MP3 · FLAC · M4A · WEBM — Max 32MB</div>
                             <div class="emotion-note">
                                 <i class="bi bi-emoji-smile me-1"></i>
-                                <strong>Émotions vocales :</strong> le moteur peut reproduire l'émotion (calme, énergie, intensité), mais le résultat dépend directement de votre façon de parler (intonation, rythme, articulation).
+                                <strong data-fr="Émotions vocales :" data-en="Voice emotion:">Émotions vocales :</strong> <span data-fr="le moteur peut reproduire l'émotion (calme, énergie, intensité), mais le résultat dépend directement de votre façon de parler (intonation, rythme, articulation)." data-en="the engine can reproduce emotion (calm, energy, intensity), but the result depends directly on how you speak — intonation, rhythm and articulation.">le moteur peut reproduire l'émotion (calme, énergie, intensité), mais le résultat dépend directement de votre façon de parler (intonation, rythme, articulation).</span>
                             </div>
                             <div class="emotion-tips">
-                                <div class="emotion-tips-title">Conseils de prise rapide</div>
+                                <div class="emotion-tips-title" data-fr="Conseils de prise rapide" data-en="Quick recording tips">Conseils de prise rapide</div>
                                 <ul>
-                                    <li>Parlez naturellement, sans accélérer, avec un volume stable.</li>
-                                    <li>Variez légèrement le ton pour capturer mieux vos émotions.</li>
-                                    <li>Évitez les bruits de fond et gardez 10 à 30s de voix claire.</li>
+                                    <li data-fr="Parlez naturellement, sans accélérer, avec un volume stable." data-en="Speak naturally, without rushing, at a steady volume.">Parlez naturellement, sans accélérer, avec un volume stable.</li>
+                                    <li data-fr="Variez légèrement le ton pour capturer mieux vos émotions." data-en="Vary your tone slightly so emotion comes through.">Variez légèrement le ton pour capturer mieux vos émotions.</li>
+                                    <li data-fr="Évitez les bruits de fond et gardez 10 à 30s de voix claire." data-en="Avoid background noise and keep 10 to 30s of clear speech.">Évitez les bruits de fond et gardez 10 à 30s de voix claire.</li>
                                 </ul>
                             </div>
                             <div class="upload-actions" onclick="event.stopPropagation()">
-                                <div class="ubtn ubtn-file" onclick="document.getElementById('audioFile').click()"><i class="bi bi-folder2-open"></i> Parcourir</div>
+                                <div class="ubtn ubtn-file" onclick="document.getElementById('audioFile').click()"><i class="bi bi-folder2-open"></i> <span data-fr="Parcourir" data-en="Browse">Parcourir</span></div>
                                 <div class="ubtn ubtn-mic" id="micBtn" onclick="app.toggleMic()">
                                     <i class="bi bi-mic-fill" id="micIcon"></i>
-                                    <span id="micLabel">Microphone</span>
+                                    <span id="micLabel" data-fr="Microphone" data-en="Microphone">Microphone</span>
                                 </div>
                             </div>
-                            <div class="mic-timer" id="micTimer">⏺ 00:00 — Capture en cours</div>
+                            <div class="mic-timer" id="micTimer" data-fr="⏺ 00:00 — Capture en cours" data-en="⏺ 00:00 — Recording">⏺ 00:00 — Capture en cours</div>
                         </div>
 
                         <div class="file-loaded" id="fileLoaded">
                             <div class="file-icon"><i class="bi bi-music-note-list"></i></div>
                             <div style="flex:1;min-width:0;">
                                 <div class="file-name" id="fileName">audio.wav</div>
-                                <div class="file-ok">Prêt · moteur vocal IA</div>
+                                <div class="file-ok" data-fr="Prêt · moteur vocal IA" data-en="Ready · AI voice engine">Prêt · moteur vocal IA</div>
                             </div>
                         </div>
 
                         <div class="dur-section" id="durSection">
                             <div class="dur-header">
-                                <span class="dur-label">Durée détectée</span>
+                                <span class="dur-label" data-fr="Durée détectée" data-en="Detected length">Durée détectée</span>
                                 <span class="dur-value" id="durVal">0s</span>
                             </div>
                             <div class="dur-track">
                                 <div class="dur-fill" id="durFill"></div>
-                                <div class="dur-mark" id="mark10" style="left:11.11%"><span class="dur-mark-label">10s MIN</span></div>
-                                <div class="dur-mark" id="mark30" style="left:33.33%"><span class="dur-mark-label">30s IDEAL</span></div>
-                                <div class="dur-mark" id="mark90" style="left:100%"><span class="dur-mark-label">90s MAX</span></div>
+                                <div class="dur-mark" id="mark10" style="left:11.11%"><span class="dur-mark-label" data-fr="10s MIN" data-en="10s MIN">10s MIN</span></div>
+                                <div class="dur-mark" id="mark30" style="left:33.33%"><span class="dur-mark-label" data-fr="30s IDEAL" data-en="30s IDEAL">30s IDEAL</span></div>
+                                <div class="dur-mark" id="mark90" style="left:100%"><span class="dur-mark-label" data-fr="90s MAX" data-en="90s MAX">90s MAX</span></div>
                             </div>
                         </div>
 
                         <div class="script-gen">
                             <div class="script-gen-top">
-                                <div class="script-gen-title">Générateur de texte à dire (audio & micro)</div>
+                                <div class="script-gen-title" data-fr="Générateur de texte à dire (audio &amp; micro)" data-en="Script generator (file &amp;amp; microphone)">Générateur de texte à dire (audio & micro)</div>
                                 <div class="script-gen-controls">
                                     <select id="scriptTheme" class="script-theme">
-                                        <option value="gaming" selected>Thème: Gaming</option>
-                                        <option value="narration">Thème: Narration</option>
-                                        <option value="podcast">Thème: Podcast</option>
-                                        <option value="pro">Thème: Professionnel</option>
+                                        <option value="gaming" selected data-fr="Thème: Gaming" data-en="Theme: Gaming">Thème: Gaming</option>
+                                        <option value="narration" data-fr="Thème: Narration" data-en="Theme: Narration">Thème: Narration</option>
+                                        <option value="podcast" data-fr="Thème: Podcast" data-en="Theme: Podcast">Thème: Podcast</option>
+                                        <option value="pro" data-fr="Thème: Professionnel" data-en="Theme: Professional">Thème: Professionnel</option>
                                     </select>
                                     <select id="scriptDuration" class="script-duration">
-                                        <option value="auto">Durée auto (détectée/live)</option>
-                                        <option value="10">10s (mini)</option>
+                                        <option value="auto" data-fr="Durée auto (détectée/live)" data-en="Auto length (detected/live)">Durée auto (détectée/live)</option>
+                                        <option value="10" data-fr="10s (mini)" data-en="10s (min)">10s (mini)</option>
                                         <option value="20">20s</option>
-                                        <option value="30" selected>30s (idéal)</option>
+                                        <option value="30" selected data-fr="30s (idéal)" data-en="30s (ideal)">30s (idéal)</option>
                                         <option value="45">45s</option>
                                         <option value="60">60s</option>
-                                        <option value="90">90s (max)</option>
+                                        <option value="90" data-fr="90s (max)" data-en="90s (max)">90s (max)</option>
                                     </select>
-                                    <button class="script-btn" type="button" onclick="app.generateScript()"><i class="bi bi-stars"></i> Générer</button>
+                                    <button class="script-btn" type="button" onclick="app.generateScript()"><i class="bi bi-stars"></i> <span data-fr="Générer" data-en="Generate">Générer</span></button>
                                     <button class="script-btn script-copy" type="button" onclick="app.copyGeneratedScript()"><i class="bi bi-clipboard"></i> Copier</button>
                                 </div>
                             </div>
-                            <textarea id="generatedScript" class="script-text" placeholder="Cliquez sur Générer pour obtenir un texte calibré selon la durée choisie..."></textarea>
+                            <textarea id="generatedScript" class="script-text" placeholder="Cliquez sur Générer pour obtenir un texte calibré selon la durée choisie..." data-ph-fr="Cliquez sur Générer pour obtenir un texte calibré selon la durée choisie..." data-ph-en="Click Generate to get a script sized for the length you picked..."></textarea>
                             <div class="script-meta">
-                                <span id="scriptMeta">Durée cible: 30s · ~70 mots</span>
-                                <span>Astuce: lisez naturellement, sans accélérer.</span>
+                                <span id="scriptMeta" data-fr="Durée cible: 30s · ~70 mots" data-en="Target length: 30s · ~70 words">Durée cible: 30s · ~70 mots</span>
+                                <span data-fr="Astuce: lisez naturellement, sans accélérer." data-en="Tip: read naturally, without rushing.">Astuce: lisez naturellement, sans accélérer.</span>
                             </div>
                         </div>
 
@@ -636,49 +636,49 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                             </select>
                             <button class="whisper-btn" id="whisperBtn" onclick="app.runWhisper()">
                                 <i class="bi bi-magic" id="whisperIcon"></i>
-                                <span id="whisperLabel">Analyser & Transcrire</span>
+                                <span id="whisperLabel" data-fr="Analyser &amp; Transcrire" data-en="Analyse &amp;amp; transcribe">Analyser & Transcrire</span>
                             </button>
                         </div>
 
                         <div style="margin-top:24px;display:flex;justify-content:flex-end;padding-top:20px;border-top:1px solid var(--border);">
-                            <button class="btn-new" onclick="goStep(2)">Étape suivante <i class="bi bi-arrow-right ms-1"></i></button>
+                            <button class="btn-new" onclick="goStep(2)"><span data-fr="Étape suivante" data-en="Next step">Étape suivante</span> <i class="bi bi-arrow-right ms-1"></i></button>
                         </div>
                     </div>
 
                     <!-- STEP 2 -->
                     <div id="wiz-step-2" class="dn">
                         <div class="wiz-top">
-                            <div class="wiz-title">Empreinte Metadata</div>
+                            <div class="wiz-title" data-fr="Empreinte Metadata" data-en="Voice print metadata">Empreinte Metadata</div>
                             <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal"></button>
                         </div>
-                        <button class="btn-back" onclick="goStep(1)"><i class="bi bi-arrow-left-circle"></i> Retour</button>
+                        <button class="btn-back" onclick="goStep(1)"><i class="bi bi-arrow-left-circle"></i> <span data-fr="Retour" data-en="Back">Retour</span></button>
 
                         <div class="row g-4">
                             <div class="col-lg-12">
-                                <span class="section-label" style="margin-top:0;">Nom de l'empreinte</span>
-                                <input type="text" id="profileName" class="kommz-input" placeholder="ex: Narrateur Studio #01" style="margin-bottom:14px;">
-                                <span class="section-label">Description (facultatif)</span>
-                                <textarea id="profileDesc" class="kommz-input" rows="4" style="resize:none;margin-bottom:14px;" placeholder="Usage prévu : Narration, Gaming, Podcast..."></textarea>
-                                <span class="section-label">Genre</span>
+                                <span class="section-label" style="margin-top:0;" data-fr="Nom de l'empreinte" data-en="Voice print name">Nom de l'empreinte</span>
+                                <input type="text" id="profileName" class="kommz-input" placeholder="ex: Narrateur Studio #01" data-ph-fr="ex: Narrateur Studio #01" data-ph-en="e.g. Studio Narrator #01" style="margin-bottom:14px;">
+                                <span class="section-label" data-fr="Description (facultatif)" data-en="Description (optional)">Description (facultatif)</span>
+                                <textarea id="profileDesc" class="kommz-input" rows="4" style="resize:none;margin-bottom:14px;" placeholder="Usage prévu : Narration, Gaming, Podcast..." data-ph-fr="Usage prévu : Narration, Gaming, Podcast..." data-ph-en="Intended use: narration, gaming, podcast..."></textarea>
+                                <span class="section-label" data-fr="Genre" data-en="Gender">Genre</span>
                                 <div class="pill-group" style="margin-bottom:14px;">
-                                    <div class="pill" onclick="togglePill(this)">Féminin</div>
-                                    <div class="pill" onclick="togglePill(this)">Masculin</div>
-                                    <div class="pill" onclick="togglePill(this)">Enfantin</div>
-                                    <div class="pill" onclick="togglePill(this)">Neutre</div>
-                                    <div class="pill" onclick="togglePill(this)">Robotique / IA</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Féminin" data-en="Female">Féminin</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Masculin" data-en="Male">Masculin</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Enfantin" data-en="Childlike">Enfantin</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Neutre" data-en="Neutral">Neutre</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Robotique / IA" data-en="Robotic / AI">Robotique / IA</div>
                                 </div>
-                                <span class="section-label">Tranche d'âge</span>
+                                <span class="section-label" data-fr="Tranche d'âge" data-en="Age range">Tranche d'âge</span>
                                 <div class="pill-group" style="margin-bottom:14px;">
-                                    <div class="pill" onclick="togglePill(this)">Enfant</div>
-                                    <div class="pill" onclick="togglePill(this)">Adolescent</div>
-                                    <div class="pill" onclick="togglePill(this)">Jeune Adulte</div>
-                                    <div class="pill" onclick="togglePill(this)">Adulte</div>
-                                    <div class="pill" onclick="togglePill(this)">Senior</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Enfant" data-en="Child">Enfant</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Adolescent" data-en="Teenager">Adolescent</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Jeune Adulte" data-en="Young adult">Jeune Adulte</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Adulte" data-en="Adult">Adulte</div>
+                                    <div class="pill" onclick="togglePill(this)" data-fr="Senior" data-en="Senior">Senior</div>
                                 </div>
-                                <span class="section-label">Visibilité</span>
+                                <span class="section-label" data-fr="Visibilité" data-en="Visibility">Visibilité</span>
                                 <div class="vis-row">
-                                    <div class="vis-opt on" onclick="setVis(this,'public')">Public</div>
-                                    <div class="vis-opt" onclick="setVis(this,'private')">Privé</div>
+                                    <div class="vis-opt on" onclick="setVis(this,'public')" data-fr="Public" data-en="Public">Public</div>
+                                    <div class="vis-opt" onclick="setVis(this,'private')" data-fr="Privé" data-en="Private">Privé</div>
                                 </div>
                             </div>
                         </div>
@@ -687,10 +687,10 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
                         <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
                             <div style="display:flex;align-items:flex-start;gap:10px;">
                                 <input type="checkbox" class="tos-check" id="tosCheck">
-                                <label for="tosCheck" class="tos-label">J'assume l'originalité du clone et détiens tous les droits d'exploitation légaux.</label>
+                                <label for="tosCheck" class="tos-label" data-fr="J'assume l'originalité du clone et détiens tous les droits d'exploitation légaux." data-en="I confirm this clone is original and that I hold all legal rights to use it.">J'assume l'originalité du clone et détiens tous les droits d'exploitation légaux.</label>
                             </div>
                             <button class="btn-save" id="btnSave" onclick="app.saveProfile()">
-                                <i class="bi bi-fingerprint me-1"></i> Enregistrer le clone
+                                <i class="bi bi-fingerprint me-1"></i> <span data-fr="Enregistrer le clone" data-en="Save clone">Enregistrer le clone</span>
                             </button>
                         </div>
                     </div>
@@ -1374,7 +1374,7 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
             const theme=this.getScriptTheme();
             const themeLabel={gaming:'Gaming',narration:'Narration',podcast:'Podcast',pro:'Pro'}[theme]||'Gaming';
             const meta=document.getElementById('scriptMeta');
-            if(meta) meta.textContent=`Durée cible: ${sec}s (${mode}) · ~${words} mots · Thème: ${themeLabel}`;
+            if(meta) (localStorage.getItem('kommz_lang')==='en' ? `Target length: ${sec}s (${mode}) · ~${words} words · Theme: ${themeLabel}` : `Durée cible: ${sec}s (${mode}) · ~${words} mots · Thème: ${themeLabel}`);
         }
         generateScript(){
             const sec=this.getTargetDurationSec();
@@ -1538,5 +1538,41 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
         applySecureUnlockUi();
     });
     </script>
+
+<button id="siteLangBtn" type="button" onclick="toggleSiteLang()"
+        style="position:fixed; top:14px; right:14px; z-index:9999;
+               background:rgba(15,23,42,.85); color:#cbd5e1;
+               border:1px solid rgba(148,163,184,.35); border-radius:8px;
+               padding:6px 12px; font-size:12px; font-weight:600;
+               cursor:pointer; backdrop-filter:blur(6px);">English</button>
+<script>
+(function () {
+  // Meme cle que l'application et les guides : la langue suit l'utilisateur.
+  var lang = localStorage.getItem('kommz_lang') || 'fr';
+  function apply() {
+    document.querySelectorAll('[data-fr]').forEach(function (el) {
+      var v = lang === 'en'
+        ? (el.getAttribute('data-en') || el.getAttribute('data-fr'))
+        : el.getAttribute('data-fr');
+      if (el.tagName === 'TITLE') { document.title = v; } else { el.innerHTML = v; }
+    });
+    document.querySelectorAll('[data-ph-fr]').forEach(function (el) {
+      el.setAttribute('placeholder', lang === 'en'
+        ? (el.getAttribute('data-ph-en') || el.getAttribute('data-ph-fr'))
+        : el.getAttribute('data-ph-fr'));
+    });
+    var b = document.getElementById('siteLangBtn');
+    if (b) b.textContent = lang === 'fr' ? 'English' : 'Fran\u00e7ais';
+    document.documentElement.lang = lang;
+  }
+  window.toggleSiteLang = function () {
+    lang = lang === 'fr' ? 'en' : 'fr';
+    localStorage.setItem('kommz_lang', lang);
+    apply();
+  };
+  document.addEventListener('DOMContentLoaded', apply);
+  window.addEventListener('load', apply);
+})();
+</script>
 </body>
 </html>
