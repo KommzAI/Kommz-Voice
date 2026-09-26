@@ -42,3 +42,4 @@ Thumbs.db
 
 # External nested project (not part of KommzVoice deliverable)
 resin-site/
+*.bak*

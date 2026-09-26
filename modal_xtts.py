@@ -1,4 +1,4 @@
-﻿"""
+"""
 KOMMZ VOICE - XTTS v2 Modal endpoint
 
 Deploy:
@@ -31,11 +31,64 @@ from pathlib import Path
 from typing import Optional
 
 import modal
-from fastapi import File, Form, UploadFile
+from fastapi import File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 
-tts_cache = modal.Volume.from_name("kommz-xtts-cache", create_if_missing=True)
+XTTS_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+
+# Le volume `kommz-xtts-cache` n'est plus utilise : il n'a jamais rien
+# conserve, faute de commit(). Il peut etre supprime avec
+#   modal volume rm kommz-xtts-cache
+# Le modele vit desormais dans l'image (voir _bake_xtts_model).
+
+
+def _bake_xtts_model():
+    """Telecharge XTTS v2 pendant la construction de l'image.
+
+    Pourquoi : le volume `kommz-xtts-cache` etait monte sur
+    /root/.local/share/tts, mais un modal.Volume ne persiste PAS les ecritures
+    sans `commit()`, et ce code ne l'appelait jamais. Le modele telecharge a
+    l'execution disparaissait donc a la mort du conteneur, et chaque cold start
+    le retelechargeait depuis Internet. C'est ce que mesurait
+    `load_time=62.20s`.
+
+    Un modele place dans l'image est un calque, monte instantanement, sans
+    reseau et sans commit a gerer. En contrepartie l'image est plus grosse,
+    ce qui est exactement le compromis qu'on veut ici.
+    """
+    import os
+
+    os.environ["COQUI_TOS_AGREED"] = "1"
+    try:
+        from TTS.utils.manage import ModelManager
+
+        ModelManager(progress_bar=False).download_model(XTTS_MODEL_NAME)
+        print(f"[XTTS][build] modele telecharge via ModelManager : {XTTS_MODEL_NAME}")
+        return
+    except Exception as exc_manager:
+        print(f"[XTTS][build] ModelManager indisponible ({exc_manager}), repli sur TTS()")
+
+    # Repli : charger via l'API haut niveau. Necessite le meme correctif
+    # torch.load que le runtime, torch 2.5 refusant les checkpoints Coqui.
+    import functools
+
+    import torch
+
+    _torch_load = torch.load
+
+    @functools.wraps(_torch_load)
+    def _compat_torch_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return _torch_load(*args, **kwargs)
+
+    torch.load = _compat_torch_load  # type: ignore[assignment]
+
+    from TTS.api import TTS
+
+    TTS(XTTS_MODEL_NAME, gpu=False)
+    print(f"[XTTS][build] modele telecharge via TTS() : {XTTS_MODEL_NAME}")
+
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -54,14 +107,54 @@ image = (
         "cutlet",
         "fugashi",
         "unidic-lite",
+        "supabase==2.6.0",
     )
+    # Le modele est fige dans l'image. Si cette etape echoue, le deploiement
+    # echoue : mieux vaut le savoir maintenant que payer 60 s a chaque
+    # demarrage en production.
+    .run_function(_bake_xtts_model)
 )
 
 
+# Image legere pour les endpoints web. `clone`, `warmup`, `synthesis` et
+# `health` sont de simples relais : ils ne chargent ni torch ni TTS, ils
+# appellent la classe GPU. Les faire demarrer sur l'image complete obligeait a
+# tirer plusieurs gigaoctets (torch 2.5.1 + TTS 0.22 + transformers) pour
+# renvoyer un JSON. C'est un cold start paye avant meme d'avoir atteint le GPU.
+proxy_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "fastapi",
+        "python-multipart",
+        "supabase==2.6.0",  # utilise uniquement par /synthesis
+        # Pour reduire la reference avant de la transmettre au conteneur GPU.
+        # Quelques dizaines de mega-octets, sans commune mesure avec l'image
+        # complete, et le relais demarre toujours en quelques centaines de ms.
+        "numpy",
+        "soundfile",
+        "soxr",  # reechantillonnage : 1,34 Mo -> 896 Ko sur la meme reference
+    )
+)
+
 app = modal.App("kommz-voice-xtts", image=image)
 
+# ATTENTION : ces deux valeurs sont lues par `os.environ` au moment du
+# `modal deploy`, sur la machine qui deploie — PAS dans le conteneur. Un secret
+# Modal ou une variable definie dans le dashboard n'a aucun effet ici : il
+# arrive trop tard. Pour les changer il faut les exporter avant de deployer :
+#
+#   XTTS_MIN_CONTAINERS=1 XTTS_IDLE_TIMEOUT=600 modal deploy modal_xtts.py
+#
+# Sans cela, min_containers vaut 0 : le conteneur GPU s'eteint apres
+# XTTS_IDLE_TIMEOUT secondes d'inactivite et la requete suivante paie le
+# demarrage complet plus le chargement du modele.
 XTTS_MIN_CONTAINERS = int(os.environ.get("XTTS_MIN_CONTAINERS", "0"))
 XTTS_IDLE_TIMEOUT = int(os.environ.get("XTTS_IDLE_TIMEOUT", "300"))
+print(
+    f"[XTTS][deploy] min_containers={XTTS_MIN_CONTAINERS} "
+    f"idle_timeout={XTTS_IDLE_TIMEOUT}s "
+    f"(lus a l'instant du deploy, pas dans le conteneur)"
+)
 XTTS_POSTPROCESS_MODE = os.environ.get("XTTS_POSTPROCESS_MODE", "strong").strip().lower()
 XTTS_MASTERING_ENABLED = os.environ.get("XTTS_MASTERING_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
 XTTS_LAUGH_MASTERING_ENABLED = os.environ.get("XTTS_LAUGH_MASTERING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -78,6 +171,14 @@ XTTS_DEFAULT_GPT_COND_CHUNK_LEN = int(os.environ.get("XTTS_DEFAULT_GPT_COND_CHUN
 XTTS_DEFAULT_MAX_REF_LEN = int(os.environ.get("XTTS_DEFAULT_MAX_REF_LEN", "10"))
 XTTS_DEFAULT_SOUND_NORM_REFS = os.environ.get("XTTS_DEFAULT_SOUND_NORM_REFS", "0").strip().lower() in {"1", "true", "yes", "on"}
 XTTS_CONDITIONING_CACHE_ENABLED = os.environ.get("XTTS_CONDITIONING_CACHE_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+# Le warmup execute une inference jetable pour absorber la compilation des
+# noyaux CUDA, que la premiere generation reelle payait a la place.
+XTTS_WARMUP_RUN_INFERENCE = os.environ.get("XTTS_WARMUP_RUN_INFERENCE", "1").strip().lower() in {"1", "true", "yes", "on"}
+# Instantane memoire : restaure un conteneur qui a deja importe Coqui et deja
+# charge le modele. Mesure visee : import_tts=26.6s + read_and_build=15.5s.
+# Mettre a "0" et redeployer suffit a revenir au comportement precedent si
+# l'instantane pose probleme.
+XTTS_MEMORY_SNAPSHOT = os.environ.get("XTTS_MEMORY_SNAPSHOT", "1").strip().lower() in {"1", "true", "yes", "on"}
 XTTS_CONDITIONING_CACHE_MAX_ITEMS = max(8, min(256, int(os.environ.get("XTTS_CONDITIONING_CACHE_MAX_ITEMS", "64"))))
 XTTS_FORCE_SPLIT_CHAR_LIMITS = {"ja": 71}
 XTTS_SUPPORTED_LANGS = {
@@ -120,7 +221,10 @@ XTTS_LANGUAGE_ALIASES = {
     memory=16384,
     scaledown_window=XTTS_IDLE_TIMEOUT,
     min_containers=XTTS_MIN_CONTAINERS,
-    volumes={"/root/.local/share/tts": tts_cache},
+    # PAS de volume sur /root/.local/share/tts : un volume monte MASQUE le
+    # contenu de l'image a cet emplacement. Le modele etant desormais fige
+    # dans l'image, le monter ici reviendrait a le cacher et a retelecharger.
+    enable_memory_snapshot=XTTS_MEMORY_SNAPSHOT,
 )
 class XTTSModel:
     @staticmethod
@@ -613,18 +717,36 @@ class XTTSModel:
             pass
         return in_path
 
-    def _ensure_model(self):
-        if hasattr(self, "tts"):
+    # ------------------------------------------------------------------
+    # Chargement en deux temps, pour l'instantane memoire
+    # ------------------------------------------------------------------
+    # Mesure decisive : import_tts=26.64s, import_torch=2.21s,
+    # read_and_build=15.47s, cuda_init=0.05s, to_cuda=0.35s.
+    # Autrement dit 44 des 45 secondes sont du travail CPU pur, refait a
+    # l'identique par chaque conteneur qui demarre. Un instantane memoire
+    # Modal restaure un processus qui a deja importe et deja charge.
+    #
+    # Contrainte : pendant la prise d'instantane, aucun GPU n'est disponible.
+    # Toute touche a CUDA a ce moment empoisonnerait l'instantane. D'ou la
+    # separation stricte :
+    #   phase 1 (snap=True)  : imports + chargement CPU du modele
+    #   phase 2 (snap=False) : detection CUDA + transfert sur la carte
+    # C'est exactement la ou passe le temps, et exactement ce qui est
+    # instantaneable.
+
+    def _load_model_cpu(self):
+        """Phase 1 : imports et chargement CPU. Ne touche JAMAIS a CUDA."""
+        if getattr(self, "_cpu_loaded", False):
             return
         if not hasattr(self, "_init_lock"):
             self._init_lock = threading.Lock()
         with self._init_lock:
-            if hasattr(self, "tts"):
+            if getattr(self, "_cpu_loaded", False):
                 return
             init_t0 = time.perf_counter()
-            # Non-interactive containers (Modal) cannot answer input() prompts.
             os.environ.setdefault("COQUI_TOS_AGREED", "1")
-            # Compatibility guard for Coqui XTTS checkpoints with PyTorch weights_only behavior.
+
+            _t = time.perf_counter()
             try:
                 import torch
                 _torch_load = torch.load
@@ -637,8 +759,40 @@ class XTTSModel:
                 torch.load = _compat_torch_load  # type: ignore[assignment]
             except Exception:
                 pass
+            t_torch_import = time.perf_counter() - _t
+
+            # Le poste le plus lourd, et de loin : l'arbre de dependances de
+            # Coqui lu depuis le systeme de fichiers paresseux de l'image.
+            _t = time.perf_counter()
             from TTS.api import TTS
-            # Force GPU usage on A10G container; fallback to CPU only if CUDA unavailable.
+            t_tts_import = time.perf_counter() - _t
+
+            load_t0 = time.perf_counter()
+            self.tts = TTS(XTTS_MODEL_NAME)
+            cpu_load_dt = time.perf_counter() - load_t0
+
+            self._cpu_loaded = True
+            self._on_gpu = False
+            total = max(0.001, time.perf_counter() - init_t0)
+            print(
+                f"[XTTS] load_cpu import_torch={t_torch_import:.2f}s "
+                f"import_tts={t_tts_import:.2f}s read_and_build={cpu_load_dt:.2f}s "
+                f"total={total:.2f}s snapshot={'on' if XTTS_MEMORY_SNAPSHOT else 'off'}"
+            )
+
+    def _move_model_to_device(self):
+        """Phase 2 : CUDA. Executee apres restauration, jamais dans l'instantane."""
+        if getattr(self, "_on_gpu", False):
+            return
+        # Verrou distinct de la phase 1 : celui de la phase 1 est capture dans
+        # l'instantane memoire. On ne reutilise pas un verrou restaure.
+        if not hasattr(self, "_gpu_lock"):
+            self._gpu_lock = threading.Lock()
+        with self._gpu_lock:
+            if getattr(self, "_on_gpu", False):
+                return
+            t0 = time.perf_counter()
+            use_gpu = False
             try:
                 import torch
                 use_gpu = bool(torch.cuda.is_available())
@@ -646,16 +800,39 @@ class XTTSModel:
                     torch.set_float32_matmul_precision("high")
             except Exception:
                 use_gpu = False
-            self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=use_gpu)
-            init_dt = max(0.001, time.perf_counter() - init_t0)
+            t_cuda = time.perf_counter() - t0
+
+            move_t0 = time.perf_counter()
+            if use_gpu:
+                try:
+                    self.tts.to("cuda")
+                except Exception as exc_to:
+                    print(f"[XTTS] .to(cuda) a echoue ({exc_to}), le modele reste sur CPU")
+                    use_gpu = False
+            move_dt = time.perf_counter() - move_t0
+
+            self._on_gpu = True
             print(
-                f"[XTTS] model_ready device={'cuda' if use_gpu else 'cpu'} "
-                f"pid={os.getpid()} load_time={init_dt:.2f}s"
+                f"[XTTS] to_device device={'cuda' if use_gpu else 'cpu'} "
+                f"pid={os.getpid()} cuda_init={t_cuda:.2f}s to_cuda={move_dt:.2f}s"
             )
 
-    @modal.enter()
-    def load(self):
-        self._ensure_model()
+    def _ensure_model(self):
+        """Garde defensive : les methodes appelees a chaud passent par ici."""
+        if getattr(self, "_cpu_loaded", False) and getattr(self, "_on_gpu", False):
+            return
+        self._load_model_cpu()
+        self._move_model_to_device()
+
+    @modal.enter(snap=True)
+    def load_snapshot(self):
+        # Capturee dans l'instantane : imports + modele en RAM.
+        self._load_model_cpu()
+
+    @modal.enter(snap=False)
+    def load_runtime(self):
+        # Rejouee a chaque demarrage, y compris apres restauration.
+        self._move_model_to_device()
 
     @modal.method()
     def clone(
@@ -675,8 +852,22 @@ class XTTSModel:
         gpt_cond_chunk_len: int = XTTS_DEFAULT_GPT_COND_CHUNK_LEN,
         max_ref_len: int = XTTS_DEFAULT_MAX_REF_LEN,
         sound_norm_refs: Optional[bool] = None,
+        dispatch_ts: float = 0.0,
     ) -> bytes:
         import soundfile as sf
+
+        # Ecart entre l'instant ou le relais a lance l'appel et l'instant ou le
+        # conteneur GPU commence a travailler : c'est le temps d'attente pur,
+        # serialisation des arguments comprise. Mesure : 14,5 s pour 2,5 s de
+        # synthese, sans savoir ou ils partaient.
+        if dispatch_ts:
+            try:
+                print(
+                    f"[XTTS] dispatch_wait_ms={(time.time() - float(dispatch_ts)) * 1000:.0f} "
+                    f"ref_bytes={len(speaker_wav_bytes or b'')} chars={len(text or '')}"
+                )
+            except Exception:
+                pass
 
         self._ensure_model()
         t0 = time.perf_counter()
@@ -868,18 +1059,104 @@ class XTTSModel:
 
     @modal.method()
     def warmup(self) -> dict:
+        """Charge le modele ET execute une inference jetable.
+
+        Charger le modele ne suffit pas : la premiere inference d'un conteneur
+        paie la compilation des noyaux CUDA et l'allocation des buffers. Mesure
+        a l'appui, la premiere generation reelle affichait rtf=1.254 alors que
+        le regime etabli est bien plus rapide. Cette penalite etait donc payee
+        par l'utilisateur au lieu d'etre payee par le warmup.
+
+        La reference utilisee est un signal synthetique : la qualite n'a aucune
+        importance, seul le passage dans le graphe compte. L'audio produit est
+        jete.
+        """
+        t0 = time.perf_counter()
         self._ensure_model()
-        return {"ready": bool(hasattr(self, "tts")), "model": "xtts_v2"}
+        load_ms = (time.perf_counter() - t0) * 1000.0
+
+        infer_ms = None
+        infer_error = ""
+        if XTTS_WARMUP_RUN_INFERENCE:
+            t1 = time.perf_counter()
+            ref_path = ""
+            out_path = ""
+            try:
+                import numpy as np
+                import soundfile as sf
+
+                sr = 24000
+                dur = 3.0
+                t = np.linspace(0.0, dur, int(sr * dur), endpoint=False, dtype=np.float32)
+                # Fondamentale + harmoniques, suffisamment "voise" pour que le
+                # calcul des latents de conditionnement ne parte pas en erreur.
+                sig = (
+                    0.35 * np.sin(2 * np.pi * 140.0 * t)
+                    + 0.20 * np.sin(2 * np.pi * 280.0 * t)
+                    + 0.10 * np.sin(2 * np.pi * 420.0 * t)
+                )
+                env = 0.5 * (1.0 - np.cos(2 * np.pi * np.clip(t / dur, 0.0, 1.0)))
+                sig = (sig * env).astype(np.float32)
+
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as ref:
+                    ref_path = ref.name
+                sf.write(ref_path, sig, sr, subtype="PCM_16")
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as out:
+                    out_path = out.name
+
+                ok, status = self._xtts_infer_with_cached_conditioning(
+                    text="hello there",
+                    language="en",
+                    speaker_path=ref_path,
+                    out_path=out_path,
+                    speed=1.0,
+                    temperature=0.7,
+                    top_k=XTTS_DEFAULT_TOP_K,
+                    top_p=XTTS_DEFAULT_TOP_P,
+                    repetition_penalty=XTTS_DEFAULT_REPETITION_PENALTY,
+                    length_penalty=XTTS_DEFAULT_LENGTH_PENALTY,
+                    enable_text_splitting=False,
+                    gpt_cond_len=XTTS_DEFAULT_GPT_COND_LEN,
+                    gpt_cond_chunk_len=XTTS_DEFAULT_GPT_COND_CHUNK_LEN,
+                    max_ref_len=XTTS_DEFAULT_MAX_REF_LEN,
+                    sound_norm_refs=False,
+                )
+                if not ok:
+                    infer_error = str(status)
+                infer_ms = (time.perf_counter() - t1) * 1000.0
+            except Exception as exc:
+                infer_error = f"{type(exc).__name__}: {exc}"
+            finally:
+                for p in (ref_path, out_path):
+                    if not p:
+                        continue
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+
+        print(
+            f"[XTTS] warmup load_ms={load_ms:.0f} "
+            f"infer_ms={(f'{infer_ms:.0f}' if infer_ms is not None else 'skipped')} "
+            f"infer_error={infer_error or 'none'}"
+        )
+        return {
+            "ready": bool(hasattr(self, "tts")),
+            "model": "xtts_v2",
+            "load_ms": round(load_ms, 1),
+            "warm_infer_ms": round(infer_ms, 1) if infer_ms is not None else None,
+            "warm_infer_error": infer_error,
+        }
 
 xtts_actor = XTTSModel()
 
 
 @app.function(
-    image=image,
+    # Relais pur : aucune inference ici, donc image legere et pas de volume.
+    image=proxy_image,
     timeout=600,
     scaledown_window=XTTS_IDLE_TIMEOUT,
     min_containers=XTTS_MIN_CONTAINERS,
-    volumes={"/root/.local/share/tts": tts_cache},
 )
 @modal.fastapi_endpoint(method="POST")
 async def clone(
@@ -923,6 +1200,7 @@ async def clone(
             gpt_cond_chunk_len=gpt_cond_chunk_len,
             max_ref_len=max_ref_len,
             sound_norm_refs=sound_norm_refs,
+            dispatch_ts=time.time(),
         )
         return Response(content=wav_bytes, media_type="audio/wav")
     except Exception as e:
@@ -930,11 +1208,12 @@ async def clone(
 
 
 @app.function(
-    image=image,
+    # Relais pur. C'est la route la plus critique pour le cold start : elle
+    # doit demarrer en une seconde, pas en tirant plusieurs gigaoctets.
+    image=proxy_image,
     timeout=900,
     scaledown_window=XTTS_IDLE_TIMEOUT,
     min_containers=XTTS_MIN_CONTAINERS,
-    volumes={"/root/.local/share/tts": tts_cache},
 )
 @modal.fastapi_endpoint(method="POST")
 async def warmup():
@@ -945,14 +1224,263 @@ async def warmup():
         return JSONResponse(status_code=500, content={"error": f"warmup failed: {e}"})
 
 
-@app.function(image=image, volumes={"/root/.local/share/tts": tts_cache})
+# Cache de references cote relais. La reference ne change pas d'une phrase a
+# l'autre, mais elle etait retelechargee depuis Supabase a chaque appel : 1,19 s
+# mesurees, sur chaque phrase. Le relais reste vivant XTTS_IDLE_TIMEOUT
+# secondes, donc le cache couvre toute une session de jeu.
+# La cle porte une empreinte de la cle d'API, jamais la cle elle-meme.
+_REF_CACHE = {}
+_REF_CACHE_MAX = 8
+
+
+def _shrink_reference_bytes(raw, max_ref_sec, gpt_cond_sec):
+    """Reduit la reference a ce que le modele utilisera reellement.
+
+    Le serveur tronque de toute facon a XTTS_REF_MAX_SEC et reechantillonne en
+    mono. Transmettre davantage au conteneur GPU, c'est payer un transfert pour
+    des octets jetes a l'arrivee. Mesure : 5 097 682 octets transmis par phrase.
+
+    En cas de doute on renvoie l'original : une reference degradee coute plus
+    cher qu'un transfert plus gros.
+    """
+    if not raw:
+        return raw, {"changed": False, "in_bytes": 0, "out_bytes": 0}
+    info = {"changed": False, "in_bytes": len(raw), "out_bytes": len(raw)}
+    try:
+        import io
+
+        import numpy as np
+        import soundfile as sf
+
+        keep_sec = max(float(max_ref_sec or 10.0), float(gpt_cond_sec or 12.0)) + 2.0
+        keep_sec = max(4.0, min(30.0, keep_sec))
+
+        data, sr = sf.read(io.BytesIO(raw), dtype="float32", always_2d=True)
+        if data.size == 0 or sr <= 0:
+            return raw, info
+        mono = data.mean(axis=1) if data.shape[1] > 1 else data[:, 0]
+        max_samples = int(keep_sec * sr)
+        if mono.shape[0] > max_samples:
+            mono = mono[:max_samples]
+
+        # Le serveur reechantillonne en 32 kHz de toute facon.
+        target_sr = 32000
+        if sr != target_sr:
+            try:
+                import soxr
+
+                mono = soxr.resample(mono, sr, target_sr, quality="VHQ")
+                sr = target_sr
+            except Exception:
+                pass  # sans soxr, la troncature seule apporte deja l'essentiel
+
+        out = io.BytesIO()
+        pcm16 = (np.clip(mono, -1.0, 1.0) * 32767.0).astype(np.int16)
+        sf.write(out, pcm16, sr, format="WAV", subtype="PCM_16")
+        shrunk = out.getvalue()
+        if shrunk and len(shrunk) < len(raw):
+            info.update(changed=True, out_bytes=len(shrunk),
+                        seconds=round(float(pcm16.shape[0]) / float(sr), 2), sr=sr)
+            return shrunk, info
+    except Exception as exc:
+        info["error"] = f"{type(exc).__name__}: {exc}"
+    return raw, info
+
+
+@app.function(
+    # Relais pur : seul supabase est importe ici, il est dans proxy_image.
+    image=proxy_image,
+    secrets=[modal.Secret.from_name("kommz-secrets")],
+    timeout=900,
+    scaledown_window=XTTS_IDLE_TIMEOUT,
+    min_containers=XTTS_MIN_CONTAINERS,
+)
+@modal.fastapi_endpoint(method="POST")
+async def synthesis(request: Request):
+    """
+    Endpoint direct /v1/synthesis — bypass Render.com.
+    Accepte JSON ou FormData. Modal fait le lookup Supabase si speaker_wav absent.
+    """
+    import json, base64, os, time as _time
+
+    # Chronometrage par etape. Mesure a l'appui : 24 s d'execution pour 3 s de
+    # synthese, sans savoir si le temps partait dans Supabase, dans l'attente
+    # d'un conteneur GPU, ou ailleurs. Supposer ne sert a rien ici.
+    _t_start = _time.perf_counter()
+    _t_parse = _t_lookup = _t_gpu = 0.0
+
+    # Parse JSON or FormData
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        body = await request.json()
+        text = str(body.get("text", "")).strip()
+        voice_id = str(body.get("voice_id", "")).strip()
+        api_key = str(body.get("api_key", "")).strip()
+        language = str(body.get("language", "fr"))
+        speed = float(body.get("speed", 1.0))
+        temperature = float(body.get("temperature", 0.7))
+        top_k = int(body.get("top_k", XTTS_DEFAULT_TOP_K))
+        top_p = float(body.get("top_p", XTTS_DEFAULT_TOP_P))
+        repetition_penalty = float(body.get("repetition_penalty", XTTS_DEFAULT_REPETITION_PENALTY))
+        length_penalty = float(body.get("length_penalty", XTTS_DEFAULT_LENGTH_PENALTY))
+        enable_text_splitting = bool(body.get("enable_text_splitting", True))
+        gpt_cond_len = int(body.get("gpt_cond_len", XTTS_DEFAULT_GPT_COND_LEN))
+        gpt_cond_chunk_len = int(body.get("gpt_cond_chunk_len", XTTS_DEFAULT_GPT_COND_CHUNK_LEN))
+        max_ref_len = int(body.get("max_ref_len", XTTS_DEFAULT_MAX_REF_LEN))
+        sound_norm_refs = bool(body.get("sound_norm_refs", False))
+        speaker_bytes = None
+    else:
+        form = await request.form()
+        text = str(form.get("text", "")).strip()
+        voice_id = str(form.get("voice_id", "")).strip()
+        api_key = str(form.get("api_key", "")).strip()
+        language = str(form.get("language", "fr"))
+        speed = float(form.get("speed", 1.0))
+        temperature = float(form.get("temperature", 0.7))
+        top_k = int(form.get("top_k", XTTS_DEFAULT_TOP_K))
+        top_p = float(form.get("top_p", XTTS_DEFAULT_TOP_P))
+        repetition_penalty = float(form.get("repetition_penalty", XTTS_DEFAULT_REPETITION_PENALTY))
+        length_penalty = float(form.get("length_penalty", XTTS_DEFAULT_LENGTH_PENALTY))
+        enable_text_splitting = str(form.get("enable_text_splitting", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        gpt_cond_len = int(form.get("gpt_cond_len", XTTS_DEFAULT_GPT_COND_LEN))
+        gpt_cond_chunk_len = int(form.get("gpt_cond_chunk_len", XTTS_DEFAULT_GPT_COND_CHUNK_LEN))
+        max_ref_len = int(form.get("max_ref_len", XTTS_DEFAULT_MAX_REF_LEN))
+        sound_norm_refs = str(form.get("sound_norm_refs", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        speaker_wav = form.get("speaker_wav")
+        if hasattr(speaker_wav, "read"):
+            speaker_bytes = await speaker_wav.read()
+        else:
+            speaker_bytes = None
+
+    _t_parse = _time.perf_counter() - _t_start
+
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "text is required"})
+    if not voice_id:
+        return JSONResponse(status_code=400, content={"error": "voice_id is required"})
+
+    # Supabase lookup si pas de speaker_wav
+    _t_lookup_start = _time.perf_counter()
+    _ref_source = "client"
+    _cache_key = ""
+    if not speaker_bytes and api_key:
+        import hashlib as _hl
+
+        _cache_key = _hl.sha1(f"{api_key}|{voice_id}".encode("utf-8")).hexdigest()
+        _cached = _REF_CACHE.get(_cache_key)
+        if _cached:
+            speaker_bytes = _cached
+            _ref_source = "cache"
+
+    if not speaker_bytes and api_key:
+        _ref_source = "supabase"
+        try:
+            from supabase import create_client
+            supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+            supabase_key = os.environ.get("SUPABASE_KEY", "").strip()
+            if supabase_url and supabase_key:
+                sb = create_client(supabase_url, supabase_key)
+                user_result = sb.table("users").select("id").eq("api_key", api_key).single().execute()
+                if user_result.data:
+                    user_id = user_result.data["id"]
+                    prof_result = sb.table("voice_profiles").select("*").eq("id", voice_id).eq("user_id", user_id).single().execute()
+                    if prof_result.data:
+                        file_id = prof_result.data.get("file_id", "")
+                        if file_id:
+                            storage_path = f"{user_id}/{file_id}"
+                            bucket = sb.storage.from_("voice-references")
+                            speaker_bytes = bucket.download(storage_path)
+        except Exception as exc_sb:
+            print(f"[XTTS][synthesis] lookup Supabase echoue : {type(exc_sb).__name__}: {exc_sb}")
+
+    if not speaker_bytes:
+        _t_lookup = _time.perf_counter() - _t_lookup_start
+        return JSONResponse(status_code=400, content={"error": "speaker_wav required or Supabase lookup failed"})
+
+    # Reduction avant le saut vers le conteneur GPU : c'est ce saut qui coute,
+    # pas la lecture locale. On ne reduit qu'une fois, puis on met en cache la
+    # version reduite.
+    _shrink_info = {}
+    if _ref_source != "cache":
+        speaker_bytes, _shrink_info = _shrink_reference_bytes(
+            speaker_bytes, max_ref_len, gpt_cond_len
+        )
+        if _cache_key:
+            _REF_CACHE[_cache_key] = speaker_bytes
+            while len(_REF_CACHE) > _REF_CACHE_MAX:
+                _REF_CACHE.pop(next(iter(_REF_CACHE)), None)
+
+    _t_lookup = _time.perf_counter() - _t_lookup_start
+
+    _t_gpu_start = _time.perf_counter()
+    try:
+        wav_bytes = await xtts_actor.clone.remote.aio(
+            text=text,
+            speaker_wav_bytes=speaker_bytes,
+            speaker_filename="reference.wav",
+            language=language,
+            speed=speed,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            length_penalty=length_penalty,
+            enable_text_splitting=enable_text_splitting,
+            gpt_cond_len=gpt_cond_len,
+            gpt_cond_chunk_len=gpt_cond_chunk_len,
+            max_ref_len=max_ref_len,
+            sound_norm_refs=sound_norm_refs,
+            dispatch_ts=_time.time(),
+        )
+        _t_gpu = _time.perf_counter() - _t_gpu_start
+        audio_b64 = base64.b64encode(wav_bytes).decode("ascii")
+        _t_total = _time.perf_counter() - _t_start
+        # `gpu` inclut l'attente d'un conteneur disponible ET la synthese.
+        # L'ecart entre ce chiffre et le `synth_time` logue par la classe est
+        # exactement le temps d'attente d'un conteneur.
+        print(
+            f"[XTTS][synthesis] parse={_t_parse:.2f}s ref_fetch={_t_lookup:.2f}s "
+            f"ref_source={_ref_source} "
+            f"gpu_dispatch_plus_synth={_t_gpu:.2f}s total={_t_total:.2f}s "
+            f"ref_bytes={len(speaker_bytes or b'')} "
+            f"shrink={_shrink_info.get('in_bytes', '-')}->{_shrink_info.get('out_bytes', '-')} "
+            f"chars={len(text)}"
+        )
+        return JSONResponse(content={
+            "success": True,
+            "audio_b64": audio_b64,
+            "estimated_seconds": len(wav_bytes) / 32000,
+            "timing_ms": {
+                "parse": round(_t_parse * 1000, 1),
+                "supabase": round(_t_lookup * 1000, 1),
+                "gpu_dispatch_plus_synth": round(_t_gpu * 1000, 1),
+                "total": round(_t_total * 1000, 1),
+            },
+        })
+    except Exception as e:
+        _t_gpu = _time.perf_counter() - _t_gpu_start
+        print(
+            f"[XTTS][synthesis] ECHEC parse={_t_parse:.2f}s supabase={_t_lookup:.2f}s "
+            f"gpu={_t_gpu:.2f}s erreur={type(e).__name__}: {e}"
+        )
+        return JSONResponse(status_code=500, content={"error": f"XTTS error: {e}"})
+
+
+@app.function(image=proxy_image, scaledown_window=XTTS_IDLE_TIMEOUT)
 @modal.fastapi_endpoint(method="GET")
 async def health():
+    # Cette route ne touche JAMAIS au conteneur GPU : c'est une fonction
+    # distincte qui renvoie une constante. Elle repond "ok" meme si le
+    # modele n'est pas charge, et meme si aucun conteneur GPU ne tourne.
+    # Elle sert a verifier que le deploiement existe, rien d'autre. Pour
+    # savoir si la synthese est chaude, il faut appeler /warmup et regarder
+    # si la reponse arrive vite.
     return JSONResponse(
         content={
             "status": "ok",
             "service": "kommz-voice-xtts",
             "model": "xtts_v2",
+            "reflects_gpu_state": False,
         }
     )
 
