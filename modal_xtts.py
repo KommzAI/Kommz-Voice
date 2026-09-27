@@ -162,9 +162,12 @@ app = modal.App("kommz-voice-xtts", image=image)
 # ATTENTION : ces deux valeurs sont lues par `os.environ` au moment du
 # `modal deploy`, sur la machine qui deploie — PAS dans le conteneur. Un secret
 # Modal ou une variable definie dans le dashboard n'a aucun effet ici : il
-# arrive trop tard. Pour les changer il faut les exporter avant de deployer :
+# arrive trop tard. Pour les changer il faut les definir avant de deployer
+# (Windows cmd : une commande par ligne, sans espace autour du "=") :
 #
-#   XTTS_MIN_CONTAINERS=1 XTTS_IDLE_TIMEOUT=600 modal deploy modal_xtts.py
+#   set XTTS_MIN_CONTAINERS=1
+#   set XTTS_IDLE_TIMEOUT=600
+#   modal deploy modal_xtts.py
 #
 # Sans cela, min_containers vaut 0 : le conteneur GPU s'eteint apres
 # XTTS_IDLE_TIMEOUT secondes d'inactivite et la requete suivante paie le
