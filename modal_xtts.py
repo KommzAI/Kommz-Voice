@@ -1263,6 +1263,7 @@ _KEY_CACHE_MAX = 1024
 _KEY_TTL_VALID_S = 600.0
 _KEY_TTL_INVALID_S = 60.0
 _SUPABASE_CLIENT = None
+_KEY_LOOKUP_TIMEOUT_S = 5.0
 
 
 def _key_fingerprint(api_key: str) -> str:
@@ -1279,6 +1280,7 @@ def _bearer_key(request: Request) -> str:
 def _lookup_api_key_sync(api_key: str) -> Optional[bool]:
     """True : cle connue. False : cle inconnue. None : verification impossible."""
     global _SUPABASE_CLIENT
+    t0 = time.perf_counter()
     try:
         if _SUPABASE_CLIENT is None:
             from supabase import create_client
@@ -1288,13 +1290,25 @@ def _lookup_api_key_sync(api_key: str) -> Optional[bool]:
             if not supabase_url or not supabase_key:
                 print("[XTTS][auth] SUPABASE_URL ou SUPABASE_KEY absent")
                 return None
-            _SUPABASE_CLIENT = create_client(supabase_url, supabase_key)
+            from supabase.lib.client_options import ClientOptions
+
+            # 5 s au lieu des 120 s par defaut du client : au-dela, l'appel
+            # est traite comme non verifie plutot que de bloquer le relais.
+            _SUPABASE_CLIENT = create_client(
+                supabase_url,
+                supabase_key,
+                options=ClientOptions(postgrest_client_timeout=_KEY_LOOKUP_TIMEOUT_S),
+            )
+            print(f"[XTTS][auth] client Supabase cree, delai={_KEY_LOOKUP_TIMEOUT_S:.0f}s")
         result = _SUPABASE_CLIENT.table("users").select("id").eq("api_key", api_key).limit(1).execute()
         return bool(result.data)
     except Exception as exc:
         # Le type seul : le message d'erreur peut reprendre l'URL de la
         # requete, donc la cle.
-        print(f"[XTTS][auth] verification impossible : {type(exc).__name__}")
+        print(
+            f"[XTTS][auth] verification impossible : {type(exc).__name__} "
+            f"apres {(time.perf_counter() - t0) * 1000.0:.0f} ms"
+        )
         return None
 
 
