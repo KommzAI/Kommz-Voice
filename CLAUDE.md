@@ -24,8 +24,8 @@ sur `main` met en ligne le serveur immédiatement, sans relecture.
 - **Modal** : manuel, par Nicolas, avec `modal deploy <fichier>`. Tu ne peux
   pas déployer sur Modal depuis ici, et tu ne dois pas essayer.
 - Les variables `XTTS_MIN_CONTAINERS`, `XTTS_MAX_CONTAINERS`,
-  `XTTS_IDLE_TIMEOUT`, `XTTS_MEMORY_SNAPSHOT` et `XTTS_WARMUP_REQUIRE_KEY`
-  sont lues par `os.environ` **au moment du `modal deploy`, sur la machine qui
+  `XTTS_IDLE_TIMEOUT`, `XTTS_MEMORY_SNAPSHOT`, `XTTS_WARMUP_REQUIRE_KEY` et
+  `XTTS_INFER_REQUIRE_KEY` sont lues par `os.environ` **au moment du `modal deploy`, sur la machine qui
   déploie**, pas dans le conteneur. Un secret Modal ne les modifie pas. À
   chaque deploy, ré-exporter toutes celles qui ne sont pas à leur valeur par
   défaut.
