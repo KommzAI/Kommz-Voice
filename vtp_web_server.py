@@ -88,6 +88,9 @@ MODAL_XTTS_URL = os.environ.get(
     "https://your-app--kommz-voice-xtts.modal.run",
 ).strip().rstrip("/")
 MODAL_XTTS_WARMUP_URL = os.environ.get("MODAL_XTTS_WARMUP_URL", "").strip().rstrip("/")
+# Cle d'API utilisee pour les rechauffements lances sans utilisateur connecte
+# (keepalive). Facultative.
+XTTS_WARMUP_API_KEY = os.environ.get("XTTS_WARMUP_API_KEY", "").strip()
 MODAL_GPTSOVITS_URL = os.environ.get(
     "MODAL_GPTSOVITS_URL",
     "https://your-app--kommz-voice-gptsovits.modal.run",
@@ -651,7 +654,7 @@ def _get_gptsovits_warmup_url() -> str:
     return _derive_modal_endpoint(MODAL_GPTSOVITS_URL, "warmup")
 
 
-def prewarm_xtts_sync(force: bool = False, cooldown_seconds: int = 90) -> None:
+def prewarm_xtts_sync(force: bool = False, cooldown_seconds: int = 90, api_key: str = "") -> None:
     """PrÃ©-rÃ©veille XTTS en mode bloquant (usage interne/keepalive)."""
     global _last_xtts_warmup_ts
     now = time.time()
@@ -663,9 +666,11 @@ def prewarm_xtts_sync(force: bool = False, cooldown_seconds: int = 90) -> None:
             if not force and (now2 - _last_xtts_warmup_ts) < cooldown_seconds:
                 return
             warmup_url = _get_xtts_warmup_url()
+            key = (api_key or XTTS_WARMUP_API_KEY).strip()
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
             ok = False
             try:
-                r = requests.post(warmup_url, timeout=(4, 20))
+                r = requests.post(warmup_url, headers=headers, timeout=(4, 20))
                 ok = r.ok
             except Exception:
                 pass
@@ -679,10 +684,10 @@ def prewarm_xtts_sync(force: bool = False, cooldown_seconds: int = 90) -> None:
         pass
 
 
-def prewarm_xtts_async(force: bool = False, cooldown_seconds: int = 90) -> None:
+def prewarm_xtts_async(force: bool = False, cooldown_seconds: int = 90, api_key: str = "") -> None:
     """PrÃ©-rÃ©veille XTTS sans bloquer la requÃªte utilisateur."""
     def _runner():
-        prewarm_xtts_sync(force=force, cooldown_seconds=cooldown_seconds)
+        prewarm_xtts_sync(force=force, cooldown_seconds=cooldown_seconds, api_key=api_key)
 
     threading.Thread(target=_runner, daemon=True).start()
 
@@ -1331,7 +1336,8 @@ def trial_status():
 @app.route("/api/xtts/warmup", methods=["POST"])
 @login_required
 def xtts_warmup():
-    prewarm_xtts_async(force=True, cooldown_seconds=10)
+    user = get_current_user() or {}
+    prewarm_xtts_async(force=True, cooldown_seconds=10, api_key=str(user.get("api_key") or ""))
     return jsonify({"success": True, "message": "XTTS warmup lancÃ©"})
 
 
