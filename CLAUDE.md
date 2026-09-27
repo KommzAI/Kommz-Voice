@@ -25,10 +25,23 @@ sur `main` met en ligne le serveur immédiatement, sans relecture.
   pas déployer sur Modal depuis ici, et tu ne dois pas essayer.
 - Les variables `XTTS_MIN_CONTAINERS`, `XTTS_MAX_CONTAINERS`,
   `XTTS_IDLE_TIMEOUT`, `XTTS_MEMORY_SNAPSHOT`, `XTTS_WARMUP_REQUIRE_KEY` et
-  `XTTS_INFER_REQUIRE_KEY` sont lues par `os.environ` **au moment du `modal deploy`, sur la machine qui
-  déploie**, pas dans le conteneur. Un secret Modal ne les modifie pas. À
-  chaque deploy, ré-exporter toutes celles qui ne sont pas à leur valeur par
-  défaut.
+  `XTTS_INFER_REQUIRE_KEY` sont lues par `os.environ` **au moment du
+  `modal deploy`, sur la machine qui déploie**, pas dans le conteneur. Un
+  secret Modal ne les modifie pas. À chaque deploy, redéfinir toutes celles
+  qui ne sont pas à leur valeur par défaut.
+- Nicolas déploie depuis **Windows cmd**. Toute commande de déploiement
+  proposée doit suivre cette syntaxe : un `set` par ligne, sans espace autour
+  du `=`, puis `modal deploy` sur la ligne suivante.
+
+  ```
+  set XTTS_MAX_CONTAINERS=3
+  set XTTS_WARMUP_REQUIRE_KEY=1
+  modal deploy modal_xtts.py
+  ```
+
+  Un `set` reste actif jusqu'à la fermeture de la fenêtre cmd : un deploy
+  suivant dans la même fenêtre en hérite. Pour revenir à la valeur par défaut,
+  vider la variable avec `set XTTS_WARMUP_REQUIRE_KEY=`.
 - Chaque `modal deploy` invalide l'instantané mémoire : le premier démarrage
   qui suit le refabrique. Un temps de démarrage mesuré juste après un
   déploiement n'est pas représentatif.
