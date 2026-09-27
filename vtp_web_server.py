@@ -654,6 +654,12 @@ def _get_gptsovits_warmup_url() -> str:
     return _derive_modal_endpoint(MODAL_GPTSOVITS_URL, "warmup")
 
 
+def _xtts_auth_headers(api_key) -> dict:
+    """En-tete d'authentification pour les routes Modal XTTS."""
+    key = str(api_key or "").strip()
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
 def prewarm_xtts_sync(force: bool = False, cooldown_seconds: int = 90, api_key: str = "") -> None:
     """PrÃ©-rÃ©veille XTTS en mode bloquant (usage interne/keepalive)."""
     global _last_xtts_warmup_ts
@@ -666,11 +672,13 @@ def prewarm_xtts_sync(force: bool = False, cooldown_seconds: int = 90, api_key: 
             if not force and (now2 - _last_xtts_warmup_ts) < cooldown_seconds:
                 return
             warmup_url = _get_xtts_warmup_url()
-            key = (api_key or XTTS_WARMUP_API_KEY).strip()
-            headers = {"Authorization": f"Bearer {key}"} if key else {}
             ok = False
             try:
-                r = requests.post(warmup_url, headers=headers, timeout=(4, 20))
+                r = requests.post(
+                    warmup_url,
+                    headers=_xtts_auth_headers(api_key or XTTS_WARMUP_API_KEY),
+                    timeout=(4, 20),
+                )
                 ok = r.ok
             except Exception:
                 pass
@@ -2172,6 +2180,7 @@ def generate_voice():
                 }), 500
             xtts_response = requests.post(
                 _get_xtts_clone_url(),
+                headers=_xtts_auth_headers(user.get("api_key")),
                 files={"speaker_wav": (file_id, reference_audio, "audio/wav")},
                 data={
                     "text":                   text,
@@ -2457,6 +2466,7 @@ def api_synthesis():
 
         xtts_response = requests.post(
             _get_xtts_clone_url(),
+            headers=_xtts_auth_headers(api_key),
             files={"speaker_wav": (profile.get("file_id", "ref.wav"), reference_audio, "audio/wav")},
             data={
                 "text":           text,

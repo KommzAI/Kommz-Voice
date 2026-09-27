@@ -18,6 +18,10 @@ API:
   POST /warmup
   Header (optional): Authorization: Bearer <api_key>
   Required when deployed with XTTS_WARMUP_REQUIRE_KEY=1.
+
+  /clone and /synthesis accept the same header (/synthesis also reads
+  `api_key` from the body). Required when deployed with
+  XTTS_INFER_REQUIRE_KEY=1.
 """
 
 from __future__ import annotations
@@ -130,8 +134,10 @@ image = (
 # XTTS_WARMUP_REQUIRE_KEY est lu au `modal deploy`, comme les reglages
 # ci-dessous, puis inscrit dans l'environnement de l'image des relais : c'est
 # ce qui le rend visible dans le conteneur. A "1", /warmup refuse les appels
-# sans cle d'API.
+# sans cle d'API. XTTS_INFER_REQUIRE_KEY fait de meme pour /clone et
+# /synthesis.
 XTTS_WARMUP_REQUIRE_KEY = os.environ.get("XTTS_WARMUP_REQUIRE_KEY", "0").strip().lower() in {"1", "true", "yes", "on"}
+XTTS_INFER_REQUIRE_KEY = os.environ.get("XTTS_INFER_REQUIRE_KEY", "0").strip().lower() in {"1", "true", "yes", "on"}
 proxy_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -145,7 +151,10 @@ proxy_image = (
         "soundfile",
         "soxr",  # reechantillonnage : 1,34 Mo -> 896 Ko sur la meme reference
     )
-    .env({"XTTS_WARMUP_REQUIRE_KEY": "1" if XTTS_WARMUP_REQUIRE_KEY else "0"})
+    .env({
+        "XTTS_WARMUP_REQUIRE_KEY": "1" if XTTS_WARMUP_REQUIRE_KEY else "0",
+        "XTTS_INFER_REQUIRE_KEY": "1" if XTTS_INFER_REQUIRE_KEY else "0",
+    })
 )
 
 app = modal.App("kommz-voice-xtts", image=image)
@@ -175,6 +184,7 @@ print(
     f"max_containers={XTTS_MAX_CONTAINERS} "
     f"idle_timeout={XTTS_IDLE_TIMEOUT}s "
     f"warmup_require_key={int(XTTS_WARMUP_REQUIRE_KEY)} "
+    f"infer_require_key={int(XTTS_INFER_REQUIRE_KEY)} "
     f"(lus a l'instant du deploy, pas dans le conteneur)"
 )
 XTTS_POSTPROCESS_MODE = os.environ.get("XTTS_POSTPROCESS_MODE", "strong").strip().lower()
@@ -1177,12 +1187,14 @@ xtts_actor = XTTSModel()
 @app.function(
     # Relais pur : aucune inference ici, donc image legere et pas de volume.
     image=proxy_image,
+    secrets=[modal.Secret.from_name("kommz-secrets")],  # verification de la cle
     timeout=600,
     scaledown_window=XTTS_IDLE_TIMEOUT,
     min_containers=XTTS_MIN_CONTAINERS,
 )
 @modal.fastapi_endpoint(method="POST")
 async def clone(
+    request: Request,
     speaker_wav: UploadFile = File(...),
     text: str = Form(...),
     reference_text: str = Form(default=""),
@@ -1199,6 +1211,16 @@ async def clone(
     max_ref_len: int = Form(default=XTTS_DEFAULT_MAX_REF_LEN),
     sound_norm_refs: Optional[bool] = Form(default=None),
 ):
+    api_key = _bearer_key(request)
+    auth, refusal = await _authorize(api_key, XTTS_INFER_REQUIRE_KEY)
+    print(
+        f"[XTTS][clone] auth={auth} "
+        f"key={_key_fingerprint(api_key)[:8] if api_key else '-'} "
+        f"{'rejected' if refusal is not None else 'accepted'}"
+    )
+    if refusal is not None:
+        return refusal
+
     if not text.strip():
         return JSONResponse(status_code=400, content={"error": "text is required"})
 
@@ -1294,6 +1316,21 @@ async def _check_api_key(api_key: str) -> str:
     return "key" if found else "invalid"
 
 
+async def _authorize(api_key: str, require_key: bool):
+    """Renvoie (auth, refus) ; refus vaut None si l'appel est accepte.
+
+    auth vaut "key", "legacy" (aucune cle), "unverified" ou "invalid".
+    """
+    auth = await _check_api_key(api_key) if api_key else "legacy"
+    if auth == "invalid":
+        return auth, JSONResponse(status_code=401, content={"error": "invalid api key"})
+    if require_key and auth == "legacy":
+        return auth, JSONResponse(status_code=401, content={"error": "api key required"})
+    if require_key and auth == "unverified":
+        return auth, JSONResponse(status_code=503, content={"error": "api key verification unavailable"})
+    return auth, None
+
+
 # Rechauffements regroupes par appelant : un groupe par cle d'API, un seul
 # groupe pour tous les appels sans cle. Un rechauffement en cours est partage
 # entre les appels du groupe ; un rechauffement reussi depuis moins de
@@ -1355,20 +1392,10 @@ async def warmup(request: Request):
             f"total_ms={(time.perf_counter() - t0) * 1000.0:.0f}"
         )
 
-    if api_key:
-        auth = await _check_api_key(api_key)
-    else:
-        auth = "legacy"
-
-    if auth == "invalid":
+    auth, refusal = await _authorize(api_key, XTTS_WARMUP_REQUIRE_KEY)
+    if refusal is not None:
         _log(auth, "rejected")
-        return JSONResponse(status_code=401, content={"error": "invalid api key"})
-    if XTTS_WARMUP_REQUIRE_KEY and auth == "legacy":
-        _log(auth, "rejected")
-        return JSONResponse(status_code=401, content={"error": "api key required"})
-    if XTTS_WARMUP_REQUIRE_KEY and auth == "unverified":
-        _log(auth, "rejected")
-        return JSONResponse(status_code=503, content={"error": "api key verification unavailable"})
+        return refusal
 
     # Une cle qui n'a pas pu etre verifiee rejoint le groupe sans cle.
     group = f"key:{_key_fingerprint(api_key)}" if auth == "key" else "legacy"
@@ -1511,6 +1538,17 @@ async def synthesis(request: Request):
 
     _t_parse = _time.perf_counter() - _t_start
 
+    # La cle peut venir de l'en-tete ou du corps ; l'en-tete l'emporte.
+    api_key = _bearer_key(request) or api_key
+    auth, refusal = await _authorize(api_key, XTTS_INFER_REQUIRE_KEY)
+    print(
+        f"[XTTS][synthesis] auth={auth} "
+        f"key={_key_fingerprint(api_key)[:8] if api_key else '-'} "
+        f"{'rejected' if refusal is not None else 'accepted'}"
+    )
+    if refusal is not None:
+        return refusal
+
     if not text:
         return JSONResponse(status_code=400, content={"error": "text is required"})
     if not voice_id:
@@ -1548,7 +1586,8 @@ async def synthesis(request: Request):
                             bucket = sb.storage.from_("voice-references")
                             speaker_bytes = bucket.download(storage_path)
         except Exception as exc_sb:
-            print(f"[XTTS][synthesis] lookup Supabase echoue : {type(exc_sb).__name__}: {exc_sb}")
+            # Le type seul : le message peut reprendre l'URL de la requete.
+            print(f"[XTTS][synthesis] lookup Supabase echoue : {type(exc_sb).__name__}")
 
     if not speaker_bytes:
         _t_lookup = _time.perf_counter() - _t_lookup_start
