@@ -1195,11 +1195,16 @@ xtts_actor = XTTSModel()
     scaledown_window=XTTS_IDLE_TIMEOUT,
     min_containers=XTTS_MIN_CONTAINERS,
 )
+# Plusieurs requetes par conteneur : un ping recu pendant un clonage est servi
+# par le meme relais au lieu d'en demarrer un second.
+@modal.concurrent(max_inputs=10)
 @modal.fastapi_endpoint(method="POST")
 async def clone(
     request: Request,
-    speaker_wav: UploadFile = File(...),
-    text: str = Form(...),
+    # Facultatifs pour laisser passer le ping, qui n'a pas de corps. Leur
+    # absence est verifiee plus bas.
+    speaker_wav: Optional[UploadFile] = File(default=None),
+    text: str = Form(default=""),
     reference_text: str = Form(default=""),
     language: str = Form(default="fr"),
     speed: float = Form(default=1.0),
@@ -1214,6 +1219,9 @@ async def clone(
     max_ref_len: int = Form(default=XTTS_DEFAULT_MAX_REF_LEN),
     sound_norm_refs: Optional[bool] = Form(default=None),
 ):
+    if request.headers.get(_RELAY_PING_HEADER):
+        return await _answer_relay_ping("clone", request)
+
     api_key = _bearer_key(request)
     auth, refusal = await _authorize(api_key, XTTS_INFER_REQUIRE_KEY)
     print(
@@ -1227,7 +1235,7 @@ async def clone(
     if not text.strip():
         return JSONResponse(status_code=400, content={"error": "text is required"})
 
-    speaker_bytes = await speaker_wav.read()
+    speaker_bytes = await speaker_wav.read() if speaker_wav is not None else b""
     if not speaker_bytes:
         return JSONResponse(status_code=400, content={"error": "speaker_wav is empty"})
 
@@ -1235,7 +1243,7 @@ async def clone(
         wav_bytes = await xtts_actor.clone.remote.aio(
             text=text.strip(),
             speaker_wav_bytes=speaker_bytes,
-            speaker_filename=speaker_wav.filename or "speaker.wav",
+            speaker_filename=(speaker_wav.filename if speaker_wav is not None else "") or "speaker.wav",
             language=language,
             speed=speed,
             temperature=temperature,
@@ -1263,6 +1271,9 @@ _KEY_CACHE_MAX = 1024
 _KEY_TTL_VALID_S = 600.0
 _KEY_TTL_INVALID_S = 60.0
 _SUPABASE_CLIENT = None
+# La verification tourne dans des threads (asyncio.to_thread) : deux appels
+# simultanes ne doivent pas creer le client chacun de leur cote.
+_SUPABASE_CLIENT_LOCK = threading.Lock()
 _KEY_LOOKUP_TIMEOUT_S = 5.0
 
 
@@ -1282,24 +1293,25 @@ def _lookup_api_key_sync(api_key: str) -> Optional[bool]:
     global _SUPABASE_CLIENT
     t0 = time.perf_counter()
     try:
-        if _SUPABASE_CLIENT is None:
-            from supabase import create_client
+        with _SUPABASE_CLIENT_LOCK:
+            if _SUPABASE_CLIENT is None:
+                from supabase import create_client
 
-            supabase_url = os.environ.get("SUPABASE_URL", "").strip()
-            supabase_key = os.environ.get("SUPABASE_KEY", "").strip()
-            if not supabase_url or not supabase_key:
-                print("[XTTS][auth] SUPABASE_URL ou SUPABASE_KEY absent")
-                return None
-            from supabase.lib.client_options import ClientOptions
+                supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+                supabase_key = os.environ.get("SUPABASE_KEY", "").strip()
+                if not supabase_url or not supabase_key:
+                    print("[XTTS][auth] SUPABASE_URL ou SUPABASE_KEY absent")
+                    return None
+                from supabase.lib.client_options import ClientOptions
 
-            # 5 s au lieu des 120 s par defaut du client : au-dela, l'appel
-            # est traite comme non verifie plutot que de bloquer le relais.
-            _SUPABASE_CLIENT = create_client(
-                supabase_url,
-                supabase_key,
-                options=ClientOptions(postgrest_client_timeout=_KEY_LOOKUP_TIMEOUT_S),
-            )
-            print(f"[XTTS][auth] client Supabase cree, delai={_KEY_LOOKUP_TIMEOUT_S:.0f}s")
+                # 5 s au lieu des 120 s par defaut du client : au-dela, l'appel
+                # est traite comme non verifie plutot que de bloquer le relais.
+                _SUPABASE_CLIENT = create_client(
+                    supabase_url,
+                    supabase_key,
+                    options=ClientOptions(postgrest_client_timeout=_KEY_LOOKUP_TIMEOUT_S),
+                )
+                print(f"[XTTS][auth] client Supabase cree, delai={_KEY_LOOKUP_TIMEOUT_S:.0f}s")
         result = _SUPABASE_CLIENT.table("users").select("id").eq("api_key", api_key).limit(1).execute()
         return bool(result.data)
     except Exception as exc:
@@ -1384,6 +1396,80 @@ async def _run_warmup_grouped(group: str):
     return await asyncio.shield(task), "run"
 
 
+# Reveil des relais /synthesis et /clone. Chaque route est une fonction Modal
+# distincte, avec son propre delai d'extinction : /warmup garde le GPU chaud,
+# mais pas ces relais, qui s'eteignaient entre deux sessions de parole et
+# perdaient leur cache de reference. /warmup leur envoie donc un ping, au plus
+# une fois toutes les _RELAY_PING_INTERVAL_S secondes. Le ping est reconnu a
+# l'en-tete X-Kommz-Ping et ne declenche ni GPU, ni Supabase, ni synthese.
+_RELAY_PING_HEADER = "x-kommz-ping"
+_RELAY_PING_INTERVAL_S = 30.0
+_RELAY_PING_TIMEOUT_S = 30.0
+_RELAY_PING_LAST = 0.0
+_RELAY_PING_TASKS = set()
+
+
+def _relay_url(fn, request: Request, target: str) -> str:
+    try:
+        url = fn.get_web_url()
+        if url:
+            return url
+    except Exception:
+        pass
+    # Repli : meme convention de nommage que l'adresse de /warmup.
+    host = request.url.hostname or ""
+    if host.endswith("-warmup.modal.run"):
+        return "https://" + host[: -len("-warmup.modal.run")] + f"-{target}.modal.run"
+    return ""
+
+
+async def _ping_relays(targets, api_key: str) -> None:
+    import httpx
+
+    t0 = time.perf_counter()
+    headers = {_RELAY_PING_HEADER: "1"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async def _one(name: str, url: str) -> str:
+        if not url:
+            return f"{name}=no_url"
+        try:
+            async with httpx.AsyncClient(timeout=_RELAY_PING_TIMEOUT_S) as client:
+                r = await client.post(url, headers=headers)
+            return f"{name}={r.status_code}"
+        except Exception as exc:
+            return f"{name}={type(exc).__name__}"
+
+    results = await asyncio.gather(*[_one(name, url) for name, url in targets])
+    print(f"[XTTS][ping] {' '.join(results)} ms={(time.perf_counter() - t0) * 1000.0:.0f}")
+
+
+def _schedule_relay_ping(request: Request, api_key: str) -> None:
+    global _RELAY_PING_LAST
+    now = time.monotonic()
+    if (now - _RELAY_PING_LAST) < _RELAY_PING_INTERVAL_S:
+        return
+    _RELAY_PING_LAST = now
+    targets = [
+        ("synthesis", _relay_url(synthesis, request, "synthesis")),
+        ("clone", _relay_url(clone, request, "clone")),
+    ]
+    task = asyncio.ensure_future(_ping_relays(targets, api_key))
+    _RELAY_PING_TASKS.add(task)
+    task.add_done_callback(_RELAY_PING_TASKS.discard)
+
+
+async def _answer_relay_ping(route: str, request: Request) -> JSONResponse:
+    """Reponse a un ping : le conteneur est deja reveille par la requete."""
+    api_key = _bearer_key(request)
+    auth, refusal = await _authorize(api_key, XTTS_INFER_REQUIRE_KEY)
+    print(f"[XTTS][ping] recu route={route} auth={auth} status={refusal.status_code if refusal is not None else 200}")
+    if refusal is not None:
+        return refusal
+    return JSONResponse(content={"status": "ok", "ping": True})
+
+
 @app.function(
     # Relais pur. C'est la route la plus critique pour le cold start : elle
     # doit demarrer en une seconde, pas en tirant plusieurs gigaoctets.
@@ -1413,6 +1499,10 @@ async def warmup(request: Request):
     if refusal is not None:
         _log(auth, "rejected")
         return refusal
+
+    # En parallele du GPU : le demarrage a froid des relais est ainsi masque.
+    # La cle n'est transmise que si elle a ete verifiee.
+    _schedule_relay_ping(request, api_key if auth == "key" else "")
 
     # Une cle qui n'a pas pu etre verifiee rejoint le groupe sans cle.
     group = f"key:{_key_fingerprint(api_key)}" if auth == "key" else "legacy"
@@ -1488,6 +1578,33 @@ def _shrink_reference_bytes(raw, max_ref_sec, gpt_cond_sec):
     return raw, info
 
 
+def _fetch_reference_sync(api_key: str, voice_id: str):
+    """Telecharge la reference depuis Supabase. Appelee dans un thread."""
+    try:
+        from supabase import create_client
+        supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+        supabase_key = os.environ.get("SUPABASE_KEY", "").strip()
+        if not supabase_url or not supabase_key:
+            return None
+        # Un client par appel : rien n'est partage entre threads.
+        sb = create_client(supabase_url, supabase_key)
+        user_result = sb.table("users").select("id").eq("api_key", api_key).single().execute()
+        if not user_result.data:
+            return None
+        user_id = user_result.data["id"]
+        prof_result = sb.table("voice_profiles").select("*").eq("id", voice_id).eq("user_id", user_id).single().execute()
+        if not prof_result.data:
+            return None
+        file_id = prof_result.data.get("file_id", "")
+        if not file_id:
+            return None
+        return sb.storage.from_("voice-references").download(f"{user_id}/{file_id}")
+    except Exception as exc_sb:
+        # Le type seul : le message peut reprendre l'URL de la requete.
+        print(f"[XTTS][synthesis] lookup Supabase echoue : {type(exc_sb).__name__}")
+        return None
+
+
 @app.function(
     # Relais pur : seul supabase est importe ici, il est dans proxy_image.
     image=proxy_image,
@@ -1496,6 +1613,11 @@ def _shrink_reference_bytes(raw, max_ref_sec, gpt_cond_sec):
     scaledown_window=XTTS_IDLE_TIMEOUT,
     min_containers=XTTS_MIN_CONTAINERS,
 )
+# Plusieurs requetes par conteneur : un ping recu pendant une synthese est
+# servi par le meme relais, qui garde ainsi un seul cache de reference. Les
+# appels bloquants (Supabase, reduction) tournent dans des threads pour ne pas
+# figer les autres requetes.
+@modal.concurrent(max_inputs=10)
 @modal.fastapi_endpoint(method="POST")
 async def synthesis(request: Request):
     """
@@ -1503,6 +1625,11 @@ async def synthesis(request: Request):
     Accepte JSON ou FormData. Modal fait le lookup Supabase si speaker_wav absent.
     """
     import json, base64, os, time as _time
+
+    # Le ping sort avant tout le reste : il n'est ni une synthese, ni une
+    # ligne [XTTS][synthesis].
+    if request.headers.get(_RELAY_PING_HEADER):
+        return await _answer_relay_ping("synthesis", request)
 
     # Chronometrage par etape. Mesure a l'appui : 24 s d'execution pour 3 s de
     # synthese, sans savoir si le temps partait dans Supabase, dans l'attente
@@ -1586,25 +1713,7 @@ async def synthesis(request: Request):
 
     if not speaker_bytes and api_key:
         _ref_source = "supabase"
-        try:
-            from supabase import create_client
-            supabase_url = os.environ.get("SUPABASE_URL", "").strip()
-            supabase_key = os.environ.get("SUPABASE_KEY", "").strip()
-            if supabase_url and supabase_key:
-                sb = create_client(supabase_url, supabase_key)
-                user_result = sb.table("users").select("id").eq("api_key", api_key).single().execute()
-                if user_result.data:
-                    user_id = user_result.data["id"]
-                    prof_result = sb.table("voice_profiles").select("*").eq("id", voice_id).eq("user_id", user_id).single().execute()
-                    if prof_result.data:
-                        file_id = prof_result.data.get("file_id", "")
-                        if file_id:
-                            storage_path = f"{user_id}/{file_id}"
-                            bucket = sb.storage.from_("voice-references")
-                            speaker_bytes = bucket.download(storage_path)
-        except Exception as exc_sb:
-            # Le type seul : le message peut reprendre l'URL de la requete.
-            print(f"[XTTS][synthesis] lookup Supabase echoue : {type(exc_sb).__name__}")
+        speaker_bytes = await asyncio.to_thread(_fetch_reference_sync, api_key, voice_id)
 
     if not speaker_bytes:
         _t_lookup = _time.perf_counter() - _t_lookup_start
@@ -1615,9 +1724,12 @@ async def synthesis(request: Request):
     # version reduite.
     _shrink_info = {}
     if _ref_source != "cache":
-        speaker_bytes, _shrink_info = _shrink_reference_bytes(
-            speaker_bytes, max_ref_len, gpt_cond_len
+        speaker_bytes, _shrink_info = await asyncio.to_thread(
+            _shrink_reference_bytes, speaker_bytes, max_ref_len, gpt_cond_len
         )
+        # Lecture et ecriture du cache se font dans la boucle asyncio, jamais
+        # dans un thread : sans point d'attente entre elles, elles ne peuvent
+        # pas s'entrelacer avec une autre requete.
         if _cache_key:
             _REF_CACHE[_cache_key] = speaker_bytes
             while len(_REF_CACHE) > _REF_CACHE_MAX:
