@@ -14,10 +14,15 @@ API:
     - language: str (default: fr)
     - speed: float (default: 1.0)
     - temperature: float (accepted for API compatibility, currently not used by XTTS)
+
+  POST /warmup
+  Header (optional): Authorization: Bearer <api_key>
+  Required when deployed with XTTS_WARMUP_REQUIRE_KEY=1.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 import time
@@ -121,6 +126,12 @@ image = (
 # appellent la classe GPU. Les faire demarrer sur l'image complete obligeait a
 # tirer plusieurs gigaoctets (torch 2.5.1 + TTS 0.22 + transformers) pour
 # renvoyer un JSON. C'est un cold start paye avant meme d'avoir atteint le GPU.
+#
+# XTTS_WARMUP_REQUIRE_KEY est lu au `modal deploy`, comme les reglages
+# ci-dessous, puis inscrit dans l'environnement de l'image des relais : c'est
+# ce qui le rend visible dans le conteneur. A "1", /warmup refuse les appels
+# sans cle d'API.
+XTTS_WARMUP_REQUIRE_KEY = os.environ.get("XTTS_WARMUP_REQUIRE_KEY", "0").strip().lower() in {"1", "true", "yes", "on"}
 proxy_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -134,6 +145,7 @@ proxy_image = (
         "soundfile",
         "soxr",  # reechantillonnage : 1,34 Mo -> 896 Ko sur la meme reference
     )
+    .env({"XTTS_WARMUP_REQUIRE_KEY": "1" if XTTS_WARMUP_REQUIRE_KEY else "0"})
 )
 
 app = modal.App("kommz-voice-xtts", image=image)
@@ -150,9 +162,19 @@ app = modal.App("kommz-voice-xtts", image=image)
 # demarrage complet plus le chargement du modele.
 XTTS_MIN_CONTAINERS = int(os.environ.get("XTTS_MIN_CONTAINERS", "0"))
 XTTS_IDLE_TIMEOUT = int(os.environ.get("XTTS_IDLE_TIMEOUT", "300"))
+# Nombre maximal de conteneurs GPU simultanes, toutes routes confondues. Au-dela,
+# Modal met les appels en file au lieu d'allumer un A10G de plus.
+XTTS_MAX_CONTAINERS = int(os.environ.get("XTTS_MAX_CONTAINERS", "3"))
+if XTTS_MAX_CONTAINERS < 1 or XTTS_MIN_CONTAINERS > XTTS_MAX_CONTAINERS:
+    raise ValueError(
+        f"XTTS_MAX_CONTAINERS={XTTS_MAX_CONTAINERS} doit valoir au moins 1 et "
+        f"au moins XTTS_MIN_CONTAINERS={XTTS_MIN_CONTAINERS}"
+    )
 print(
     f"[XTTS][deploy] min_containers={XTTS_MIN_CONTAINERS} "
+    f"max_containers={XTTS_MAX_CONTAINERS} "
     f"idle_timeout={XTTS_IDLE_TIMEOUT}s "
+    f"warmup_require_key={int(XTTS_WARMUP_REQUIRE_KEY)} "
     f"(lus a l'instant du deploy, pas dans le conteneur)"
 )
 XTTS_POSTPROCESS_MODE = os.environ.get("XTTS_POSTPROCESS_MODE", "strong").strip().lower()
@@ -221,6 +243,7 @@ XTTS_LANGUAGE_ALIASES = {
     memory=16384,
     scaledown_window=XTTS_IDLE_TIMEOUT,
     min_containers=XTTS_MIN_CONTAINERS,
+    max_containers=XTTS_MAX_CONTAINERS,
     # PAS de volume sur /root/.local/share/tts : un volume monte MASQUE le
     # contenu de l'image a cet emplacement. Le modele etant desormais fige
     # dans l'image, le monter ici reviendrait a le cacher et a retelecharger.
@@ -1207,21 +1230,155 @@ async def clone(
         return JSONResponse(status_code=500, content={"error": f"XTTS error: {e}"})
 
 
+# Verification des cles d'API cote relais. Le cache porte une empreinte
+# SHA-256 de la cle, jamais la cle elle-meme. Une cle valide est gardee
+# 10 minutes, une cle inconnue 1 minute.
+_KEY_CACHE = {}
+_KEY_CACHE_MAX = 1024
+_KEY_TTL_VALID_S = 600.0
+_KEY_TTL_INVALID_S = 60.0
+_SUPABASE_CLIENT = None
+
+
+def _key_fingerprint(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def _bearer_key(request: Request) -> str:
+    raw = (request.headers.get("authorization") or "").strip()
+    if raw[:7].lower() == "bearer ":
+        return raw[7:].strip()
+    return ""
+
+
+def _lookup_api_key_sync(api_key: str) -> Optional[bool]:
+    """True : cle connue. False : cle inconnue. None : verification impossible."""
+    global _SUPABASE_CLIENT
+    try:
+        if _SUPABASE_CLIENT is None:
+            from supabase import create_client
+
+            supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+            supabase_key = os.environ.get("SUPABASE_KEY", "").strip()
+            if not supabase_url or not supabase_key:
+                print("[XTTS][auth] SUPABASE_URL ou SUPABASE_KEY absent")
+                return None
+            _SUPABASE_CLIENT = create_client(supabase_url, supabase_key)
+        result = _SUPABASE_CLIENT.table("users").select("id").eq("api_key", api_key).limit(1).execute()
+        return bool(result.data)
+    except Exception as exc:
+        # Le type seul : le message d'erreur peut reprendre l'URL de la
+        # requete, donc la cle.
+        print(f"[XTTS][auth] verification impossible : {type(exc).__name__}")
+        return None
+
+
+async def _check_api_key(api_key: str) -> str:
+    """Renvoie "key" (cle connue), "invalid" ou "unverified"."""
+    fingerprint = _key_fingerprint(api_key)
+    now = time.monotonic()
+    cached = _KEY_CACHE.get(fingerprint)
+    if cached and cached[1] > now:
+        return "key" if cached[0] else "invalid"
+
+    found = await asyncio.to_thread(_lookup_api_key_sync, api_key)
+    if found is None:
+        return "unverified"
+    if len(_KEY_CACHE) >= _KEY_CACHE_MAX:
+        for fp in [fp for fp, (_, exp) in _KEY_CACHE.items() if exp <= now]:
+            _KEY_CACHE.pop(fp, None)
+        if len(_KEY_CACHE) >= _KEY_CACHE_MAX:
+            _KEY_CACHE.clear()
+    ttl = _KEY_TTL_VALID_S if found else _KEY_TTL_INVALID_S
+    _KEY_CACHE[fingerprint] = (found, now + ttl)
+    return "key" if found else "invalid"
+
+
+# Rechauffements regroupes par appelant : un groupe par cle d'API, un seul
+# groupe pour tous les appels sans cle. Un rechauffement en cours est partage
+# entre les appels du groupe ; un rechauffement reussi depuis moins de
+# _WARMUP_REUSE_S secondes est renvoye tel quel, sans repasser par le GPU.
+_WARMUP_REUSE_S = 60.0
+_WARMUP_INFLIGHT = {}
+_WARMUP_DONE = {}
+_WARMUP_DONE_MAX = 1024
+
+
+async def _run_warmup_grouped(group: str):
+    """Renvoie (resultat, mode), mode valant "run", "shared" ou "reused"."""
+    now = time.monotonic()
+    done = _WARMUP_DONE.get(group)
+    if done and (now - done[0]) < _WARMUP_REUSE_S:
+        return done[1], "reused"
+
+    task = _WARMUP_INFLIGHT.get(group)
+    if task is not None:
+        return await asyncio.shield(task), "shared"
+
+    async def _run():
+        try:
+            data = await xtts_actor.warmup.remote.aio()
+            if len(_WARMUP_DONE) >= _WARMUP_DONE_MAX:
+                _WARMUP_DONE.clear()
+            _WARMUP_DONE[group] = (time.monotonic(), data or {})
+            return data or {}
+        finally:
+            _WARMUP_INFLIGHT.pop(group, None)
+
+    task = asyncio.ensure_future(_run())
+    _WARMUP_INFLIGHT[group] = task
+    return await asyncio.shield(task), "run"
+
+
 @app.function(
     # Relais pur. C'est la route la plus critique pour le cold start : elle
     # doit demarrer en une seconde, pas en tirant plusieurs gigaoctets.
     image=proxy_image,
+    secrets=[modal.Secret.from_name("kommz-secrets")],
     timeout=900,
     scaledown_window=XTTS_IDLE_TIMEOUT,
-    min_containers=XTTS_MIN_CONTAINERS,
+    min_containers=min(XTTS_MIN_CONTAINERS, 1),
+    # Un seul conteneur relais, qui accepte de nombreux appels simultanes :
+    # le regroupement des rechauffements vaut ainsi pour tous les appelants.
+    max_containers=1,
 )
+@modal.concurrent(max_inputs=100)
 @modal.fastapi_endpoint(method="POST")
-async def warmup():
+async def warmup(request: Request):
+    t0 = time.perf_counter()
+    api_key = _bearer_key(request)
+    fingerprint = _key_fingerprint(api_key)[:8] if api_key else "-"
+
+    def _log(auth: str, mode: str) -> None:
+        print(
+            f"[XTTS][warmup] auth={auth} mode={mode} key={fingerprint} "
+            f"total_ms={(time.perf_counter() - t0) * 1000.0:.0f}"
+        )
+
+    if api_key:
+        auth = await _check_api_key(api_key)
+    else:
+        auth = "legacy"
+
+    if auth == "invalid":
+        _log(auth, "rejected")
+        return JSONResponse(status_code=401, content={"error": "invalid api key"})
+    if XTTS_WARMUP_REQUIRE_KEY and auth == "legacy":
+        _log(auth, "rejected")
+        return JSONResponse(status_code=401, content={"error": "api key required"})
+    if XTTS_WARMUP_REQUIRE_KEY and auth == "unverified":
+        _log(auth, "rejected")
+        return JSONResponse(status_code=503, content={"error": "api key verification unavailable"})
+
+    # Une cle qui n'a pas pu etre verifiee rejoint le groupe sans cle.
+    group = f"key:{_key_fingerprint(api_key)}" if auth == "key" else "legacy"
     try:
-        data = await xtts_actor.warmup.remote.aio()
-        return JSONResponse(content={"status": "ok", **(data or {})})
+        data, mode = await _run_warmup_grouped(group)
     except Exception as e:
+        _log(auth, "error")
         return JSONResponse(status_code=500, content={"error": f"warmup failed: {e}"})
+    _log(auth, mode)
+    return JSONResponse(content={"status": "ok", **data, "mode": mode})
 
 
 # Cache de references cote relais. La reference ne change pas d'une phrase a
