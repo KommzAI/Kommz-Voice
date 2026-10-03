@@ -182,8 +182,26 @@ if XTTS_MAX_CONTAINERS < 1 or XTTS_MIN_CONTAINERS > XTTS_MAX_CONTAINERS:
         f"XTTS_MAX_CONTAINERS={XTTS_MAX_CONTAINERS} doit valoir au moins 1 et "
         f"au moins XTTS_MIN_CONTAINERS={XTTS_MIN_CONTAINERS}"
     )
+# Identite du conteneur courant. Modal fournit MODAL_TASK_ID dans chaque
+# conteneur ; absent sur la machine qui deploie. Sert a voir dans les journaux
+# si deux lignes viennent du meme conteneur ou d'un conteneur neuf.
+_CONTAINER_ID = os.environ.get("MODAL_TASK_ID", "local")
+_CONTAINER_STARTED = time.time()
+_CONTAINER_LAST_INPUT = {}
+
+
+def _container_tag(route: str) -> str:
+    """container=..., age du conteneur, et silence depuis l'entree precedente de cette route."""
+    now = time.time()
+    last = _CONTAINER_LAST_INPUT.get(route)
+    _CONTAINER_LAST_INPUT[route] = now
+    idle = f"{now - last:.0f}s" if last else "premier"
+    return f"container={_CONTAINER_ID} uptime={now - _CONTAINER_STARTED:.0f}s idle_avant={idle}"
+
+
 print(
-    f"[XTTS][deploy] min_containers={XTTS_MIN_CONTAINERS} "
+    f"[XTTS][deploy] container={_CONTAINER_ID} "
+    f"min_containers={XTTS_MIN_CONTAINERS} "
     f"max_containers={XTTS_MAX_CONTAINERS} "
     f"idle_timeout={XTTS_IDLE_TIMEOUT}s "
     f"warmup_require_key={int(XTTS_WARMUP_REQUIRE_KEY)} "
@@ -1407,23 +1425,28 @@ _RELAY_PING_INTERVAL_S = 30.0
 _RELAY_PING_TIMEOUT_S = 30.0
 _RELAY_PING_LAST = 0.0
 _RELAY_PING_TASKS = set()
+# Adresses des relais, resolues une fois par conteneur.
+_RELAY_URLS = {}
 
 
-def _relay_url(fn, request: Request, target: str) -> str:
+async def _relay_url(fn, host: str, target: str) -> str:
+    cached = _RELAY_URLS.get(target)
+    if cached:
+        return cached
+    url = ""
     try:
-        url = fn.get_web_url()
-        if url:
-            return url
-    except Exception:
-        pass
-    # Repli : meme convention de nommage que l'adresse de /warmup.
-    host = request.url.hostname or ""
-    if host.endswith("-warmup.modal.run"):
-        return "https://" + host[: -len("-warmup.modal.run")] + f"-{target}.modal.run"
-    return ""
+        url = await fn.get_web_url.aio() or ""
+    except Exception as exc:
+        print(f"[XTTS][ping] get_web_url {target} : {type(exc).__name__}")
+    if not url and host.endswith("-warmup.modal.run"):
+        # Repli : meme convention de nommage que l'adresse de /warmup.
+        url = "https://" + host[: -len("-warmup.modal.run")] + f"-{target}.modal.run"
+    if url:
+        _RELAY_URLS[target] = url
+    return url
 
 
-async def _ping_relays(targets, api_key: str) -> None:
+async def _ping_relays(host: str, api_key: str, since_last: str) -> None:
     import httpx
 
     t0 = time.perf_counter()
@@ -1431,43 +1454,57 @@ async def _ping_relays(targets, api_key: str) -> None:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    async def _one(name: str, url: str) -> str:
+    async def _one(name: str, fn) -> str:
+        t1 = time.perf_counter()
+        url = await _relay_url(fn, host, name)
         if not url:
             return f"{name}=no_url"
         try:
             async with httpx.AsyncClient(timeout=_RELAY_PING_TIMEOUT_S) as client:
                 r = await client.post(url, headers=headers)
-            return f"{name}={r.status_code}"
+            try:
+                remote = (r.json() or {}).get("container", "?")
+            except Exception:
+                remote = "?"
+            # Le conteneur qui a repondu : s'il change d'un ping a l'autre,
+            # Modal a demarre un nouveau relais.
+            return f"{name}={r.status_code}@{remote}/{(time.perf_counter() - t1) * 1000.0:.0f}ms"
         except Exception as exc:
-            return f"{name}={type(exc).__name__}"
+            return f"{name}={type(exc).__name__}/{(time.perf_counter() - t1) * 1000.0:.0f}ms"
 
-    results = await asyncio.gather(*[_one(name, url) for name, url in targets])
-    print(f"[XTTS][ping] {' '.join(results)} ms={(time.perf_counter() - t0) * 1000.0:.0f}")
+    results = await asyncio.gather(_one("synthesis", synthesis), _one("clone", clone))
+    print(
+        f"[XTTS][ping] {' '.join(results)} total_ms={(time.perf_counter() - t0) * 1000.0:.0f} "
+        f"depuis_dernier_ping={since_last} from={_CONTAINER_ID}"
+    )
 
 
 def _schedule_relay_ping(request: Request, api_key: str) -> None:
     global _RELAY_PING_LAST
     now = time.monotonic()
-    if (now - _RELAY_PING_LAST) < _RELAY_PING_INTERVAL_S:
+    since = now - _RELAY_PING_LAST
+    if since < _RELAY_PING_INTERVAL_S:
+        print(f"[XTTS][ping] saute : dernier ping il y a {since:.0f}s")
         return
+    since_last = f"{since:.0f}s" if _RELAY_PING_LAST else "premier"
     _RELAY_PING_LAST = now
-    targets = [
-        ("synthesis", _relay_url(synthesis, request, "synthesis")),
-        ("clone", _relay_url(clone, request, "clone")),
-    ]
-    task = asyncio.ensure_future(_ping_relays(targets, api_key))
+    task = asyncio.ensure_future(_ping_relays(request.url.hostname or "", api_key, since_last))
     _RELAY_PING_TASKS.add(task)
     task.add_done_callback(_RELAY_PING_TASKS.discard)
 
 
 async def _answer_relay_ping(route: str, request: Request) -> JSONResponse:
     """Reponse a un ping : le conteneur est deja reveille par la requete."""
+    tag = _container_tag(route)
     api_key = _bearer_key(request)
     auth, refusal = await _authorize(api_key, XTTS_INFER_REQUIRE_KEY)
-    print(f"[XTTS][ping] recu route={route} auth={auth} status={refusal.status_code if refusal is not None else 200}")
+    print(
+        f"[XTTS][ping] recu route={route} auth={auth} "
+        f"status={refusal.status_code if refusal is not None else 200} {tag}"
+    )
     if refusal is not None:
         return refusal
-    return JSONResponse(content={"status": "ok", "ping": True})
+    return JSONResponse(content={"status": "ok", "ping": True, "container": _CONTAINER_ID})
 
 
 @app.function(
@@ -1688,7 +1725,8 @@ async def synthesis(request: Request):
     print(
         f"[XTTS][synthesis] auth={auth} "
         f"key={_key_fingerprint(api_key)[:8] if api_key else '-'} "
-        f"{'rejected' if refusal is not None else 'accepted'}"
+        f"{'rejected' if refusal is not None else 'accepted'} "
+        f"{_container_tag('synthesis')}"
     )
     if refusal is not None:
         return refusal
@@ -1764,7 +1802,8 @@ async def synthesis(request: Request):
         # L'ecart entre ce chiffre et le `synth_time` logue par la classe est
         # exactement le temps d'attente d'un conteneur.
         print(
-            f"[XTTS][synthesis] parse={_t_parse:.2f}s ref_fetch={_t_lookup:.2f}s "
+            f"[XTTS][synthesis] container={_CONTAINER_ID} "
+            f"parse={_t_parse:.2f}s ref_fetch={_t_lookup:.2f}s "
             f"ref_source={_ref_source} "
             f"gpu_dispatch_plus_synth={_t_gpu:.2f}s total={_t_total:.2f}s "
             f"ref_bytes={len(speaker_bytes or b'')} "
@@ -1785,7 +1824,8 @@ async def synthesis(request: Request):
     except Exception as e:
         _t_gpu = _time.perf_counter() - _t_gpu_start
         print(
-            f"[XTTS][synthesis] ECHEC parse={_t_parse:.2f}s supabase={_t_lookup:.2f}s "
+            f"[XTTS][synthesis] ECHEC container={_CONTAINER_ID} "
+            f"parse={_t_parse:.2f}s supabase={_t_lookup:.2f}s "
             f"gpu={_t_gpu:.2f}s erreur={type(e).__name__}: {e}"
         )
         return JSONResponse(status_code=500, content={"error": f"XTTS error: {e}"})
