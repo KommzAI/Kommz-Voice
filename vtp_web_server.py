@@ -294,7 +294,18 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Bucket Supabase Storage pour les fichiers audio
 _storage_bucket_checked = False
 _last_xtts_warmup_ts = 0.0
+# Dernier warmup REUSSI et derniere synthese reussie : seuls ces deux
+# horodatages disent que le GPU a ete sollicite. _last_xtts_warmup_ts note
+# chaque tentative, y compris en echec.
+_last_xtts_warmup_ok_ts = 0.0
+_last_xtts_activity_ts = 0.0
+_last_xtts_warmup_error = ""
 _xtts_warmup_lock = threading.Lock()
+# Duree d'inactivite apres laquelle Modal eteint le GPU (scaledown_window de
+# modal_xtts.py, XTTS_IDLE_TIMEOUT). Au-dela, le serveur n'est plus chaud.
+XTTS_SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("XTTS_SCALEDOWN_WINDOW_SECONDS", "300"))
+# Apres un echec, une nouvelle tentative ne doit pas attendre tout le cooldown.
+XTTS_WARMUP_RETRY_AFTER_FAILURE_SECONDS = 12
 _xtts_status_cache = {"ts": 0.0, "payload": None}
 _xtts_keepalive_started = False
 _request_guards = {}
@@ -662,34 +673,54 @@ def _xtts_auth_headers(api_key) -> dict:
 
 def prewarm_xtts_sync(force: bool = False, cooldown_seconds: int = 90, api_key: str = "") -> None:
     """PrÃ©-rÃ©veille XTTS en mode bloquant (usage interne/keepalive)."""
-    global _last_xtts_warmup_ts
+    global _last_xtts_warmup_ts, _last_xtts_warmup_ok_ts, _last_xtts_warmup_error
+    # Un echec precedent n'impose pas le cooldown complet.
+    def _cooldown() -> float:
+        if _last_xtts_warmup_ok_ts >= _last_xtts_warmup_ts:
+            return float(cooldown_seconds)
+        return float(min(cooldown_seconds, XTTS_WARMUP_RETRY_AFTER_FAILURE_SECONDS))
+
     now = time.time()
-    if not force and (now - _last_xtts_warmup_ts) < cooldown_seconds:
+    if not force and (now - _last_xtts_warmup_ts) < _cooldown():
         return
     try:
         with _xtts_warmup_lock:
             now2 = time.time()
-            if not force and (now2 - _last_xtts_warmup_ts) < cooldown_seconds:
+            if not force and (now2 - _last_xtts_warmup_ts) < _cooldown():
                 return
             warmup_url = _get_xtts_warmup_url()
             ok = False
+            err = ""
+            # Pas de repli sur /health : sur Modal, health est une fonction CPU
+            # distincte qui renvoie un JSON fixe et ne touche jamais au GPU.
+            # 45 s de lecture : sur un GPU froid, le warmup charge le modele et
+            # execute une inference jetable.
             try:
                 r = requests.post(
                     warmup_url,
                     headers=_xtts_auth_headers(api_key or XTTS_WARMUP_API_KEY),
-                    timeout=(4, 20),
+                    timeout=(4, 45),
                 )
                 ok = r.ok
-            except Exception:
-                pass
-            if not ok:
-                try:
-                    requests.get(_get_xtts_health_url(), timeout=(4, 10))
-                except Exception:
-                    pass
+                if not ok:
+                    err = f"HTTP {r.status_code}"
+            except Exception as e:
+                err = type(e).__name__
             _last_xtts_warmup_ts = time.time()
+            if ok:
+                _last_xtts_warmup_ok_ts = _last_xtts_warmup_ts
+                _last_xtts_warmup_error = ""
+            else:
+                _last_xtts_warmup_error = err or "warmup injoignable"
+                print(f"[XTTS][warmup] echec depuis Render : {_last_xtts_warmup_error}")
     except Exception:
         pass
+
+
+def _mark_xtts_activity() -> None:
+    """Une synthese reussie sollicite le GPU autant qu'un warmup."""
+    global _last_xtts_activity_ts
+    _last_xtts_activity_ts = time.time()
 
 
 def prewarm_xtts_async(force: bool = False, cooldown_seconds: int = 90, api_key: str = "") -> None:
@@ -724,7 +755,7 @@ def _get_xtts_runtime_status(force: bool = False) -> dict:
     """
     Retourne l'Ã©tat runtime du serveur XTTS:
     - online: endpoint /health joignable
-    - warm: warmup rÃ©cent (moins de 10 min)
+    - warm: warmup ou synthese reussis depuis moins de XTTS_SCALEDOWN_WINDOW_SECONDS
     - cold_start_likely: online mais pas warm
     """
     now = time.time()
@@ -744,7 +775,11 @@ def _get_xtts_runtime_status(force: bool = False) -> dict:
     except Exception as e:
         err = str(e)
 
-    warm = (now - float(_last_xtts_warmup_ts or 0.0)) < 600.0
+    # Chaud = le GPU a ete sollicite avec succes (warmup ou synthese) depuis
+    # moins que la fenetre d'extinction de Modal. Une tentative echouee ne
+    # compte pas.
+    last_ok = max(float(_last_xtts_warmup_ok_ts or 0.0), float(_last_xtts_activity_ts or 0.0))
+    warm = last_ok > 0 and (now - last_ok) < XTTS_SCALEDOWN_WINDOW_SECONDS
     cold_start_likely = bool(online and not warm)
 
     if not online:
@@ -767,6 +802,10 @@ def _get_xtts_runtime_status(force: bool = False) -> dict:
         "message": message,
         "error": err,
         "last_warmup_ts": int(_last_xtts_warmup_ts or 0),
+        "last_warmup_ok_ts": int(_last_xtts_warmup_ok_ts or 0),
+        "last_activity_ts": int(_last_xtts_activity_ts or 0),
+        "last_warmup_error": _last_xtts_warmup_error,
+        "scaledown_window_s": XTTS_SCALEDOWN_WINDOW_SECONDS,
     }
     _xtts_status_cache["ts"] = now
     _xtts_status_cache["payload"] = payload
@@ -2210,6 +2249,7 @@ def generate_voice():
                     "success": False,
                     "error": f"Erreur Modal XTTS (HTTP {xtts_response.status_code}): {err}"
                 }), 502
+            _mark_xtts_activity()
             audio_bytes = xtts_response.content
 
         # Upload du rÃ©sultat dans Supabase Storage pour accÃ¨s ultÃ©rieur
@@ -2487,6 +2527,8 @@ def api_synthesis():
             timeout=300
         )
 
+        if xtts_response.ok:
+            _mark_xtts_activity()
         if not xtts_response.ok:
             return jsonify({"error": "Erreur synthÃ¨se XTTS"}), 502
 
