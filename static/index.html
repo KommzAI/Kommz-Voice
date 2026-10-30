@@ -766,7 +766,7 @@ body{background:var(--bg-void);color:var(--text);font-family:var(--font);height:
             errBox.textContent = '⚠️ Entrez votre clé de licence (format VCV-...)';
             return;
         }
-        if (!key.startsWith('VCV-') && !['VTP-VOICE-ADMIN','NICOLAS-VOICE-PRO'].includes(key)) {
+        if (!key.startsWith('VCV-')) {
             errBox.textContent = '❌ Format invalide — la clé doit commencer par VCV-';
             return;
         }

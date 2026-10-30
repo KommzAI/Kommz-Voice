@@ -3,7 +3,10 @@
 ## Scope
 - Supabase keys (`service_role`, `anon` if exposed)
 - Flask secrets (`SECRET_KEY`, `ADMIN_SECRET`)
-- License salts (`VOICE_SECRET_SALT`, `PASSWORD_SALT`)
+- License salts (`VOICE_SECRET_SALT`, `DESKTOP_SECRET_SALT`, `PASSWORD_SALT`)
+  - Changing a license salt invalidates every sold key that is not registered in the
+    database. Follow `docs/licences-enregistrees.md` first (registration, migration,
+    `KOMMZ_LICENSE_REQUIRE_REGISTERED=1`), then rotate.
 - Third-party keys (`DEEPL_AUTH_KEY`, SMTP credentials, Make connections)
 
 ## 1. Prepare Green Environment

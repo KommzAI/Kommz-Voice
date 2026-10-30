@@ -155,7 +155,7 @@ def _get_gptsovits_health_url() -> str:
 # Secrets
 SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
 VOICE_SECRET_SALT = os.environ.get("VOICE_SECRET_SALT", "").strip()
-DESKTOP_SECRET_SALT = os.environ.get("DESKTOP_SECRET_SALT", "VTP-2025-MAKE-AUTOMATION-X99").strip()
+DESKTOP_SECRET_SALT = os.environ.get("DESKTOP_SECRET_SALT", "").strip()
 PASSWORD_SALT = os.environ.get("PASSWORD_SALT", "").strip()
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "").strip()
 SECURE_TTS_OWNER_EMAILS = {
@@ -163,6 +163,21 @@ SECURE_TTS_OWNER_EMAILS = {
     for e in os.environ.get("SECURE_TTS_OWNER_EMAILS", "").split(",")
     if e.strip()
 }
+
+# Licences vendues (Make + Stripe)
+# - KOMMZ_LICENSE_WEBHOOK_SECRET : secret des routes /internal/licenses/* (24 caracteres
+#   minimum). Absent ou trop court : ces routes repondent 503.
+# - KOMMZ_LICENSE_REQUIRE_REGISTERED=1 : seules les cles enregistrees en base passent,
+#   la signature n'est plus utilisee.
+# - KOMMZ_LICENSE_MAX_FUTURE_DAYS : une cle non enregistree n'est acceptee que si sa fin
+#   est au plus a ce nombre de jours (aussi applique aux enregistrements et renouvellements).
+# - KOMMZ_MAX_DEVICES_PER_KEY : nombre d'appareils differents par cle (0 = illimite).
+LICENSE_WEBHOOK_SECRET = os.environ.get("KOMMZ_LICENSE_WEBHOOK_SECRET", "").strip()
+LICENSE_WEBHOOK_MIN_LENGTH = 24
+LICENSE_REQUIRE_REGISTERED = os.environ.get("KOMMZ_LICENSE_REQUIRE_REGISTERED", "0").strip().lower() in {"1", "true", "yes", "on"}
+LICENSE_MAX_FUTURE_DAYS = int(os.environ.get("KOMMZ_LICENSE_MAX_FUTURE_DAYS", "400") or "400")
+LICENSE_MAX_DEVICES = int(os.environ.get("KOMMZ_MAX_DEVICES_PER_KEY", "3") or "0")
+LICENSE_PUBLIC_RATE_LIMIT_PER_10MIN = int(os.environ.get("KOMMZ_LICENSE_RATE_LIMIT_PER_10MIN", "30") or "0")
 
 # Trial config (free plan hard limits)
 TRIAL_WINDOW_HOURS = int(os.environ.get("TRIAL_WINDOW_HOURS", "24"))
@@ -917,9 +932,8 @@ def verify_vcv_key(key: str) -> dict:
 
     Retourne : {"valid": bool, "expired": bool, "expiration_ts": int}
     """
-    MASTER_KEYS = ["VTP-VOICE-ADMIN", "NICOLAS-VOICE-PRO"]
-    if key in MASTER_KEYS:
-        return {"valid": True, "expired": False, "expiration_ts": 9999999999}
+    if not VOICE_SECRET_SALT:
+        return {"valid": False, "expired": False, "expiration_ts": 0}
 
     parts = key.split("-")
     # Format : VCV-TIMESTAMP-RANDOM-SIG8 â†’ 4 parties
@@ -953,6 +967,10 @@ def verify_vtp_key(key: str) -> dict:
     VÃ©rifie une clÃ© VTP desktop.
     Format : VTP-{timestamp_expiration}-{random4}-{sha256[:8]}
     """
+    if not DESKTOP_SECRET_SALT:
+        # Sans sel configure, aucune signature n'est acceptee (jamais de valeur par defaut).
+        return {"valid": False, "expired": False, "expiration_ts": 0}
+
     parts = key.split("-")
     if len(parts) != 4 or parts[0] != "VTP":
         return {"valid": False, "expired": False, "expiration_ts": 0}
@@ -974,6 +992,144 @@ def verify_vtp_key(key: str) -> dict:
 
     expired = expiration_ts < int(time.time())
     return {"valid": True, "expired": expired, "expiration_ts": expiration_ts}
+
+
+# =============================================================================
+# LICENCES ENREGISTREES (achat -> base) ET RESOLUTION
+# =============================================================================
+# Une cle vendue est enregistree en base a l'achat (POST /internal/licenses/register,
+# appele par Make). La fin de reference est alors `expires_at` (timestamp unix) et non la
+# date lue dans la cle : un renouvellement prolonge la meme cle.
+# Une cle absente de la base n'est acceptee que par la voie « signature » (heritage), avec
+# une fin plausible, et plus du tout si KOMMZ_LICENSE_REQUIRE_REGISTERED=1.
+
+_LICENSE_KEY_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{7,79}$")
+_LICENSE_PRODUCT_PREFIX = {"gamer": "VTP-", "voice": "VCV-"}
+_LICENSE_PRODUCT_COMPAT = {"gamer": {"gamer", "bundle"}, "voice": {"voice", "bundle"}}
+_LICENSE_INVALID = {"valid": False, "expired": False, "expiration_ts": 0, "registered": False}
+
+
+def _fmt_license_date(ts: int) -> str:
+    return datetime.utcfromtimestamp(int(ts)).strftime("%d/%m/%Y")
+
+
+def _as_int(value):
+    """Entier strict (refuse les booleens, flottants et textes non numeriques)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _embedded_key_ts(key: str) -> int:
+    parts = (key or "").split("-")
+    if len(parts) == 4:
+        try:
+            return int(parts[1])
+        except ValueError:
+            return 0
+    return 0
+
+
+def _max_license_ts() -> int:
+    return int(time.time()) + max(1, LICENSE_MAX_FUTURE_DAYS) * 86400
+
+
+def _fetch_license_row(key: str):
+    try:
+        resp = supabase.table("license_keys").select("*").eq("key_value", key).limit(1).execute()
+        rows = resp.data or []
+        return rows[0] if rows else None
+    except Exception as e:
+        print(f"[WARN] Lecture license_keys impossible: {type(e).__name__}", flush=True)
+        return None
+
+
+def resolve_license(key: str, product: str) -> dict:
+    """
+    Valide une cle pour `product` ("gamer" ou "voice").
+
+    1. Cle enregistree en base : la fin est `expires_at`.
+    2. Sinon, et seulement si KOMMZ_LICENSE_REQUIRE_REGISTERED n'est pas actif : signature
+       (voie heritee), avec une fin au plus a KOMMZ_LICENSE_MAX_FUTURE_DAYS jours.
+
+    Retourne {"valid", "expired", "expiration_ts", "registered"}.
+    """
+    key = (key or "").strip().upper()
+    prefix = _LICENSE_PRODUCT_PREFIX.get(product)
+    if not prefix or not key.startswith(prefix):
+        return dict(_LICENSE_INVALID)
+
+    row = _fetch_license_row(key)
+    if row and row.get("registered") and row.get("expires_at"):
+        ts = _as_int(row.get("expires_at"))
+        row_product = (row.get("product") or "").strip().lower()
+        if ts is None or (row_product and row_product not in _LICENSE_PRODUCT_COMPAT[product]):
+            return dict(_LICENSE_INVALID)
+        return {"valid": True, "expired": ts < int(time.time()), "expiration_ts": ts, "registered": True}
+
+    if LICENSE_REQUIRE_REGISTERED:
+        return dict(_LICENSE_INVALID)
+
+    check = verify_vcv_key(key) if product == "voice" else verify_vtp_key(key)
+    if not check["valid"] or check["expiration_ts"] > _max_license_ts():
+        return dict(_LICENSE_INVALID)
+    check["registered"] = False
+    return check
+
+
+def _license_public_limited():
+    """Limite de debit des routes publiques de licence. Retourne une reponse 429 ou None."""
+    if LICENSE_PUBLIC_RATE_LIMIT_PER_10MIN <= 0:
+        return None
+    if _too_many_attempts("license_public", _ip_prefix(_get_client_ip()), LICENSE_PUBLIC_RATE_LIMIT_PER_10MIN, window_seconds=600):
+        return jsonify({"ok": False, "valid": False, "success": False,
+                        "error": "Trop de tentatives, reessayez dans 10 minutes"}), 429
+    return None
+
+
+def _webhook_failures(ip: str, record: bool = False) -> int:
+    now = time.time()
+    bucket = f"license_webhook_fail:{ip}"
+    with _request_guards_lock:
+        hits = [t for t in _request_guards.get(bucket, []) if t >= now - 600]
+        if record:
+            hits.append(now)
+        _request_guards[bucket] = hits
+        return len(hits)
+
+
+def _license_webhook_denied():
+    """
+    Controle commun des routes /internal/licenses/*.
+    503 si le secret n'est pas configure, 429 apres 20 echecs en 10 minutes par IP,
+    401 si l'en-tete X-Kommz-Webhook-Secret est faux. Retourne une reponse ou None.
+    """
+    if len(LICENSE_WEBHOOK_SECRET) < LICENSE_WEBHOOK_MIN_LENGTH:
+        return jsonify({"ok": False, "error": "Webhook de licences non configure"}), 503
+    ip = _get_client_ip()
+    if _webhook_failures(ip) >= 20:
+        return jsonify({"ok": False, "error": "Trop d'echecs, reessayez plus tard"}), 429
+    provided = request.headers.get("X-Kommz-Webhook-Secret", "")
+    if not hmac.compare_digest(provided.encode("utf-8"), LICENSE_WEBHOOK_SECRET.encode("utf-8")):
+        _webhook_failures(ip, record=True)
+        return jsonify({"ok": False, "error": "Non autorise"}), 401
+    return None
+
+
+def _link_license_subscription(subscription_id: str, key: str, product: str, email: str) -> None:
+    if not subscription_id:
+        return
+    supabase.table("license_subscriptions").upsert({
+        "subscription_id": subscription_id,
+        "key_value": key,
+        "product": product,
+        "customer_email": email,
+        "updated_at": datetime.utcnow().isoformat(),
+    }, on_conflict="subscription_id,key_value").execute()
 
 
 def verify_trial_desktop_key(key: str) -> dict:
@@ -1000,7 +1156,7 @@ def verify_trial_desktop_key(key: str) -> dict:
     expected_old_b = hashlib.sha256(f"{DESKTOP_SECRET_SALT}{ts_str}{rand}".encode()).hexdigest()[:8].upper()
     if not (
         hmac.compare_digest(sig_upper, expected_new)
-        or (len(sig_upper) == 8 and (hmac.compare_digest(sig_upper, expected_old_a) or hmac.compare_digest(sig_upper, expected_old_b)))
+        or (DESKTOP_SECRET_SALT and len(sig_upper) == 8 and (hmac.compare_digest(sig_upper, expected_old_a) or hmac.compare_digest(sig_upper, expected_old_b)))
     ):
         return {"valid": False, "expired": False, "expiration_ts": 0}
 
@@ -1047,6 +1203,9 @@ def register():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "").strip()
+    limited = _license_public_limited()
+    if limited:
+        return limited
     license_key = (data.get("license_key") or "").strip().upper()
     trial_mode = str(data.get("trial_mode", "")).strip().lower() in {"1", "true", "yes", "on"}
     trial_fingerprint_raw = (data.get("trial_fingerprint") or "").strip()
@@ -1060,7 +1219,7 @@ def register():
         return jsonify({"success": False, "error": "ClÃ© de licence VCV- requise"}), 400
 
     # VÃ©rification clÃ© licence
-    vcv_result = verify_vcv_key(license_key)
+    vcv_result = resolve_license(license_key, "voice")
     if not vcv_result["valid"]:
         return jsonify({"success": False, "error": "ClÃ© de licence invalide"}), 403
     if vcv_result["expired"]:
@@ -1533,13 +1692,16 @@ def verify_voice_license_web():
       { valid: false, error: "..." }
     """
     data = request.get_json() or {}
+    limited = _license_public_limited()
+    if limited:
+        return limited
     raw_key = (data.get("license_key") or "").strip().upper()
 
     if not raw_key:
         return jsonify({"valid": False, "error": "ClÃ© manquante"}), 400
 
     # VÃ©rification cryptographique locale
-    vcv_result = verify_vcv_key(raw_key)
+    vcv_result = resolve_license(raw_key, "voice")
     if not vcv_result["valid"]:
         return jsonify({"valid": False, "error": "ClÃ© de licence invalide"}), 200
     if vcv_result["expired"]:
@@ -1588,12 +1750,12 @@ def _activate_desktop_license_common(product: str):
     if not key or not email or "@" not in email or not hwid:
         return jsonify({"ok": False, "error": "ParamÃ¨tres manquants"}), 400
 
-    if product == "voice":
-        check = verify_vcv_key(key)
-        expected_products = {"voice", "bundle"}
-    else:
-        check = verify_vtp_key(key)
-        expected_products = {"gamer", "bundle"}
+    limited = _license_public_limited()
+    if limited:
+        return limited
+
+    check = resolve_license(key, "voice" if product == "voice" else "gamer")
+    expected_products = _LICENSE_PRODUCT_COMPAT["voice" if product == "voice" else "gamer"]
 
     if not check["valid"]:
         return jsonify({"ok": False, "error": "ClÃ© invalide"}), 403
@@ -1621,6 +1783,11 @@ def _activate_desktop_license_common(product: str):
         hwid_history_raw = (existing.get("desktop_hwid") or "").strip()
         hwids = [h.strip().upper() for h in hwid_history_raw.split(",") if h.strip()]
         if hwid not in hwids:
+            if LICENSE_MAX_DEVICES > 0 and len(hwids) >= LICENSE_MAX_DEVICES:
+                return jsonify({
+                    "ok": False,
+                    "error": "Nombre maximal d'appareils atteint pour cette cle"
+                }), 409
             hwids.append(hwid)
         desktop_hwid = ",".join(hwids)
 
@@ -1637,6 +1804,143 @@ def _activate_desktop_license_common(product: str):
         return jsonify({"ok": True, "expiration": expiration_date})
     except Exception as e:
         return jsonify({"ok": False, "error": f"Erreur DB: {e}"}), 500
+
+
+@app.route("/internal/licenses/register", methods=["POST"])
+def internal_license_register():
+    """
+    Enregistre en base les cles vendues, avant l'envoi de l'e-mail au client (appele par Make).
+
+    Corps JSON, une cle :  { key_value, product, email, expiration, subscription_id }
+    ou plusieurs cles :    { keys: [{ key_value, product, expiration }, ...], email, subscription_id }
+    `product` vaut "gamer" (cle VTP-) ou "voice" (cle VCV-), `expiration` est un timestamp unix.
+
+    Idempotent : une cle deja enregistree n'est jamais raccourcie, et une activation deja
+    faite (e-mail, appareils) n'est jamais reinitialisee.
+    """
+    denied = _license_webhook_denied()
+    if denied:
+        return denied
+
+    data = request.get_json(silent=True) or {}
+    email = _clean_email(data.get("email") or data.get("customer_email") or "")
+    subscription_id = str(data.get("subscription_id") or "").strip()
+    items = data.get("keys")
+    if not isinstance(items, list):
+        items = [{"key_value": data.get("key_value"), "product": data.get("product"), "expiration": data.get("expiration")}]
+    if not items or len(items) > 10:
+        return jsonify({"ok": False, "error": "Aucune cle ou trop de cles"}), 400
+
+    # Validation complete avant la moindre ecriture.
+    clean = []
+    for item in items:
+        item = item if isinstance(item, dict) else {}
+        key = str(item.get("key_value") or "").strip().upper()
+        product = str(item.get("product") or "").strip().lower()
+        expiration = _as_int(item.get("expiration"))
+        prefix = _LICENSE_PRODUCT_PREFIX.get(product)
+        if not prefix or not key.startswith(prefix) or not _LICENSE_KEY_RE.match(key):
+            return jsonify({"ok": False, "error": "Cle ou produit invalide"}), 400
+        if expiration is None or expiration < int(time.time()) - 86400 or expiration > _max_license_ts():
+            return jsonify({"ok": False, "error": "Date de fin invalide"}), 400
+        clean.append((key, product, expiration))
+
+    try:
+        for key, product, expiration in clean:
+            existing = _fetch_license_row(key)
+            if existing:
+                current = _as_int(existing.get("expires_at")) if existing.get("registered") else None
+                new_ts = max(expiration, current or 0)
+                supabase.table("license_keys").update({
+                    "registered": True,
+                    "expires_at": new_ts,
+                    "expiration": _fmt_license_date(new_ts),
+                }).eq("key_value", key).execute()
+            else:
+                supabase.table("license_keys").insert({
+                    "key_value": key,
+                    "product": product,
+                    "is_activated": False,
+                    "registered": True,
+                    "expires_at": expiration,
+                    "expiration": _fmt_license_date(expiration),
+                }).execute()
+            _link_license_subscription(subscription_id, key, product, email)
+    except Exception as e:
+        print(f"[LICENSE] register: echec DB ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Erreur base de donnees"}), 500
+
+    print(f"[LICENSE] register: {len(clean)} cle(s) enregistree(s)", flush=True)
+    return jsonify({"ok": True, "registered": len(clean)})
+
+
+@app.route("/internal/licenses/renew", methods=["POST"])
+def internal_license_renew():
+    """
+    Prolonge les cles d'un abonnement apres un renouvellement paye (appele par Make sur
+    invoice.paid, billing_reason = subscription_cycle).
+
+    Corps JSON : { subscription_id, period_end, customer_email, products: ["gamer", "voice"] }
+    - Les cles liees a `subscription_id` (table license_subscriptions) sont prolongees.
+    - Sans lien (abonnement anterieur a l'enregistrement), repli sur l'e-mail d'activation,
+      limite aux `products` donnes. Le lien est alors cree pour les renouvellements suivants.
+    - Une cle n'est jamais raccourcie.
+    """
+    denied = _license_webhook_denied()
+    if denied:
+        return denied
+
+    data = request.get_json(silent=True) or {}
+    subscription_id = str(data.get("subscription_id") or "").strip()
+    email = _clean_email(data.get("customer_email") or data.get("email") or "")
+    period_end = _as_int(data.get("period_end"))
+    raw_products = data.get("products") if isinstance(data.get("products"), list) else []
+    products = [p for p in (str(x).strip().lower() for x in raw_products) if p in _LICENSE_PRODUCT_PREFIX]
+
+    if period_end is None or period_end < int(time.time()) - 86400 or period_end > _max_license_ts():
+        return jsonify({"ok": False, "error": "period_end invalide"}), 400
+    if not subscription_id and not email:
+        return jsonify({"ok": False, "error": "subscription_id ou customer_email requis"}), 400
+
+    try:
+        keys = {}
+        if subscription_id:
+            links = supabase.table("license_subscriptions").select("key_value,product").eq("subscription_id", subscription_id).execute()
+            for link in (links.data or []):
+                keys[(link.get("key_value") or "").upper()] = link.get("product") or ""
+        linked_by_email = False
+        if not keys and email and products:
+            rows = supabase.table("license_keys").select("key_value,product").eq("activated_by_email", email).in_("product", products).execute()
+            for row in (rows.data or []):
+                keys[(row.get("key_value") or "").upper()] = row.get("product") or ""
+            linked_by_email = bool(keys)
+
+        updated = 0
+        for key, product in keys.items():
+            if not key:
+                continue
+            row = _fetch_license_row(key)
+            if not row:
+                continue
+            current = _as_int(row.get("expires_at")) if row.get("registered") else None
+            current = current or _embedded_key_ts(key)
+            new_ts = max(period_end, current)
+            supabase.table("license_keys").update({
+                "registered": True,
+                "expires_at": new_ts,
+                "expiration": _fmt_license_date(new_ts),
+            }).eq("key_value", key).execute()
+            if linked_by_email:
+                _link_license_subscription(subscription_id, key, product, email)
+            updated += 1
+    except Exception as e:
+        print(f"[LICENSE] renew: echec DB ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Erreur base de donnees"}), 500
+
+    if not updated:
+        return jsonify({"ok": False, "error": "Aucune cle liee a cet abonnement"}), 404
+    print(f"[LICENSE] renew: {updated} cle(s) prolongee(s)", flush=True)
+    return jsonify({"ok": True, "updated": updated})
 
 
 @app.route("/license/desktop/activate", methods=["POST"])
