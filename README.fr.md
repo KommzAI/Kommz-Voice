@@ -1,4 +1,6 @@
-## Kommz Voice
+# Kommz Voice
+
+[English](README.md) | [Français](README.fr.md)
 
 Kommz Voice est la brique moteur de l'écosystème Kommz.
 
@@ -8,44 +10,26 @@ Ce repo regroupe la partie vocale et services autour de :
 - la transcription Whisper
 - les services backend liés aux usages temps réel
 
-[Français](README.md) | [English](README.fr.md)
-
 Kommz Voice est la **brique moteur vocale** de l'écosystème Kommz.
 Elle alimente les flux de **transcription**, **traduction** (via client) et **synthèse vocale** utilisés en temps réel par les applications clientes (ex: *Kommz Gamer Community*).
 
 ## Ce que fait le projet
 
-<<<<<<< Updated upstream
 - XTTS pour la synthèse multilingue
 - GPT-SoVITS pour le timbre et le style vocal (Hybrid)
 - Whisper pour la transcription
 - API serveur pour l'intégration côté client
 - Routage et fallback selon la disponibilité des moteurs
-=======
+
 L'objectif de Kommz Voice est de proposer une base plus claire, plus modulaire et plus robuste pour alimenter l'écosystème vocal autour de Kommz.
 
-### Rôle dans l'écosystème
-- `Kommz Gamer Community` : client desktop open source
-- `Kommz Voice` : moteurs et services vocaux
-- `Discord` : communauté, support, retours
-- `Patreon` : soutien au développement et avantages liés à l'écosystème
-
 ### Priorités actuelles
+
 - fiabilisation des moteurs vocaux
 - amélioration des fallbacks et du routage
 - meilleure structure documentaire
 - meilleure séparation entre client et brique moteur
 - amélioration du support pour les usages temps réel
-
-### Liens
-- Community : https://github.com/Kommz-Gamer/Kommz-Gamer
-- Discord : https://discord.gg/uv25d6uGKZ
-- Patreon : https://www.patreon.com/KommzInnovations
-- Site : https://kommz.fr
-
-
-## Ecosystem positioning
->>>>>>> Stashed changes
 
 ## Rôle dans l'écosystème
 
@@ -84,15 +68,9 @@ L'objectif de Kommz Voice est de proposer une base plus claire, plus modulaire e
 
 `vtp_web_server.py` applique des vérifications fail-fast en production quand des secrets critiques sont absents ou invalides.
 
-## Contribuer / Support
-
-- Contribuer : `CONTRIBUTING.md`
-- Support : `SUPPORT.md`
-- Politique de sécurité : `SECURITY.md` / `SECURITY.fr.md`
-
 ## Liens publics
 
-- GitHub Communauté : https://github.com/Kommz-Gamer/Kommz-Gamer
+- GitHub Communauté : https://github.com/KommzAI/Kommz-Gamer
 - Discord : https://discord.gg/uv25d6uGKZ
 - Patreon : https://www.patreon.com/KommzInnovations
 - Site : https://kommz.fr
@@ -101,6 +79,7 @@ L'objectif de Kommz Voice est de proposer une base plus claire, plus modulaire e
 
 - Contribuer : `CONTRIBUTING.md`
 - Support : `SUPPORT.md`
+- Politique de sécurité : `SECURITY.md` / `SECURITY.fr.md`
 
 ## Releases
 

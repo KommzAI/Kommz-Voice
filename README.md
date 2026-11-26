@@ -52,7 +52,7 @@ It powers synthesis, transcription, and multi-engine routing for connected clien
 
 ## Public links
 
-- Community GitHub: https://github.com/Kommz-Gamer/Kommz-Gamer
+- Community GitHub: https://github.com/KommzAI/Kommz-Gamer
 - Discord: https://discord.gg/uv25d6uGKZ
 - Patreon: https://www.patreon.com/KommzInnovations
 
