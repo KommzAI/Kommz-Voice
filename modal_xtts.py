@@ -1424,7 +1424,6 @@ _RELAY_PING_HEADER = "x-kommz-ping"
 _RELAY_PING_INTERVAL_S = 30.0
 _RELAY_PING_TIMEOUT_S = 30.0
 _RELAY_PING_LAST = 0.0
-_RELAY_PING_TASKS = set()
 # Adresses des relais, resolues une fois par conteneur.
 _RELAY_URLS = {}
 
@@ -1479,18 +1478,34 @@ async def _ping_relays(host: str, api_key: str, since_last: str) -> None:
     )
 
 
-def _schedule_relay_ping(request: Request, api_key: str) -> None:
+def _schedule_relay_ping(request: Request, api_key: str):
+    """Lance les pings et renvoie la tache, ou None si un ping vient de partir.
+
+    La tache DOIT etre attendue avant de repondre : une fois la requete
+    terminee, Modal ne fait plus avancer les taches de fond du conteneur.
+    Mesure en production : un ping lance en arriere-plan d'un warmup de 1,5 s
+    ne partait qu'a la requete suivante, ~4 min plus tard, et le relais
+    /synthesis s'etait eteint entre-temps.
+    """
     global _RELAY_PING_LAST
     now = time.monotonic()
     since = now - _RELAY_PING_LAST
     if since < _RELAY_PING_INTERVAL_S:
         print(f"[XTTS][ping] saute : dernier ping il y a {since:.0f}s")
-        return
+        return None
     since_last = f"{since:.0f}s" if _RELAY_PING_LAST else "premier"
     _RELAY_PING_LAST = now
-    task = asyncio.ensure_future(_ping_relays(request.url.hostname or "", api_key, since_last))
-    _RELAY_PING_TASKS.add(task)
-    task.add_done_callback(_RELAY_PING_TASKS.discard)
+    return asyncio.ensure_future(_ping_relays(request.url.hostname or "", api_key, since_last))
+
+
+async def _finish_relay_ping(task) -> None:
+    """Attend la fin des pings ; leur echec ne fait jamais echouer le warmup."""
+    if task is None:
+        return
+    try:
+        await task
+    except Exception as exc:
+        print(f"[XTTS][ping] echec : {type(exc).__name__}")
 
 
 async def _answer_relay_ping(route: str, request: Request) -> JSONResponse:
@@ -1538,16 +1553,19 @@ async def warmup(request: Request):
         return refusal
 
     # En parallele du GPU : le demarrage a froid des relais est ainsi masque.
-    # La cle n'est transmise que si elle a ete verifiee.
-    _schedule_relay_ping(request, api_key if auth == "key" else "")
+    # La cle n'est transmise que si elle a ete verifiee. Les pings sont
+    # attendus avant de repondre (voir _schedule_relay_ping).
+    ping_task = _schedule_relay_ping(request, api_key if auth == "key" else "")
 
     # Une cle qui n'a pas pu etre verifiee rejoint le groupe sans cle.
     group = f"key:{_key_fingerprint(api_key)}" if auth == "key" else "legacy"
     try:
         data, mode = await _run_warmup_grouped(group)
     except Exception as e:
+        await _finish_relay_ping(ping_task)
         _log(auth, "error")
         return JSONResponse(status_code=500, content={"error": f"warmup failed: {e}"})
+    await _finish_relay_ping(ping_task)
     _log(auth, mode)
     return JSONResponse(content={"status": "ok", **data, "mode": mode})
 
