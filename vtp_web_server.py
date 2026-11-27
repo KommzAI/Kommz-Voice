@@ -478,6 +478,20 @@ def _is_valid_hwid(hwid: str) -> bool:
     return bool(HWID_RE.match((hwid or "").strip().upper()))
 
 
+# Valeurs qu'un client sans identifiant d'appareil envoyait a la place de
+# l'identifiant (Windows 11 sans WMIC : "unknown_hwid"). Partagees par plusieurs
+# PC, elles ne designent aucun appareil : un seul essai gratuit etait possible.
+_PLACEHOLDER_HWIDS = frozenset({"UNKNOWN_HWID", "UNKNOWN", "NONE", "NULL", "UNDEFINED"})
+
+
+def _is_placeholder_hwid(hwid: str) -> bool:
+    value = (hwid or "").strip().upper()
+    if value in _PLACEHOLDER_HWIDS:
+        return True
+    compact = re.sub(r"[^A-Z0-9]", "", value)
+    return len(set(compact)) <= 1  # 00000000, FFFFFFFF...
+
+
 def _has_laugh_intent(text: str) -> bool:
     return bool(LAUGH_RE.search((text or "").strip()))
 
@@ -1675,6 +1689,12 @@ def activate_desktop_trial_license():
 
     if not _is_valid_email(email) or not _is_valid_hwid(hwid):
         return jsonify({"ok": False, "error": "ParamÃ¨tres manquants"}), 400
+    if _is_placeholder_hwid(hwid):
+        # Un identifiant commun a plusieurs PC ferait refuser l'essai a tous sauf au premier.
+        return jsonify({
+            "ok": False,
+            "error": "Identifiant d'appareil non reconnu. Mettez a jour Kommz Gamer vers la derniere version, puis reessayez.",
+        }), 400
 
     def _hwid_list(raw: str) -> list[str]:
         return [h.strip().upper() for h in (raw or "").split(",") if h.strip()]
